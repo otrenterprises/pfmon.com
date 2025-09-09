@@ -1,1 +1,0 @@
-{"statusCode":405,"headers":{"Access-Control-Allow-Origin":"*","Access-Control-Allow-Headers":"Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token","Access-Control-Allow-Methods":"GET,PUT,POST,DELETE,OPTIONS","Content-Type":"application/json"},"body":"{\"error\":\"Method not allowed\",\"details\":null,\"timestamp\":\"2025-09-03T19:55:34.146Z\"}"}
