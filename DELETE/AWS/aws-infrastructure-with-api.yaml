@@ -1,0 +1,631 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'PFMON Trading Journal - Complete Serverless Infrastructure with API Gateway and Lambda Functions'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: pfmon
+    Description: Name of the project for resource naming
+
+  DomainName:
+    Type: String
+    Description: Your domain name (e.g., pfmon.com)
+    Default: pfmon.com
+
+  HostedZoneId:
+    Type: String
+    Description: Route53 Hosted Zone ID for pfmon.com (optional)
+    Default: "Z05167923T7K3L4N0ST0Q"
+
+Conditions:
+  HasHostedZone: !Not [!Equals [!Ref HostedZoneId, ""]]
+
+Resources:
+  # KMS Key for encryption
+  TradingJournalKMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: "KMS key for PFMON Trading Journal encryption"
+      KeyPolicy:
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+          - Sid: Allow Lambda functions to use the key
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+            Resource: "*"
+
+  TradingJournalKMSKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub "alias/${ProjectName}-trading-journal-key"
+      TargetKeyId: !Ref TradingJournalKMSKey
+
+  # Cognito SMS Role
+  CognitoSMSRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cognito-idp.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: SNSPublishPolicy
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: "*"
+
+  # Cognito User Pool
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "${ProjectName}-UserPool"
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      UsernameConfiguration:
+        CaseSensitive: false
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          RequireUppercase: true
+      MfaConfiguration: OPTIONAL
+      EnabledMfas:
+        - SOFTWARE_TOKEN_MFA
+        - SMS_MFA
+      SmsConfiguration:
+        SnsCallerArn: !GetAtt CognitoSMSRole.Arn
+        ExternalId: !Sub "${ProjectName}-external-id"
+      LambdaConfig:
+        PostConfirmation: !GetAtt PostRegistrationTrigger.Arn
+
+  # User Pool Client
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub "${ProjectName}-client"
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_PASSWORD_AUTH
+      SupportedIdentityProviders:
+        - COGNITO
+      CallbackURLs:
+        - http://localhost:3000
+        - !Sub "https://${ProjectName}.${DomainName}"
+        - !Sub "https://app.${DomainName}"
+      LogoutURLs:
+        - http://localhost:3000
+        - !Sub "https://${ProjectName}.${DomainName}"
+        - !Sub "https://app.${DomainName}"
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - email
+        - openid
+        - profile
+      AllowedOAuthFlowsUserPoolClient: true
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+
+  # Identity Pool
+  IdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: !Sub "${ProjectName}-IdentityPool"
+      AllowUnauthenticatedIdentities: false
+      CognitoIdentityProviders:
+        - ClientId: !Ref UserPoolClient
+          ProviderName: !GetAtt UserPool.ProviderName
+
+  # IAM Role for authenticated users
+  AuthenticatedRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                "cognito-identity.amazonaws.com:aud": !Ref IdentityPool
+              "ForAnyValue:StringLike":
+                "cognito-identity.amazonaws.com:amr": authenticated
+      Policies:
+        - PolicyName: S3UserFolderAccess
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub "${S3FileBucket}/users/${cognito-identity.amazonaws.com:sub}/*"
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !Ref S3FileBucket
+                Condition:
+                  StringLike:
+                    "s3:prefix": "users/${cognito-identity.amazonaws.com:sub}/*"
+
+  # Identity Pool Role Attachment
+  IdentityPoolRoleAttachment:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    Properties:
+      IdentityPoolId: !Ref IdentityPool
+      Roles:
+        authenticated: !GetAtt AuthenticatedRole.Arn
+
+  # DynamoDB Tables
+  UserProfilesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${ProjectName}-UserProfiles"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: dataType
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: dataType
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  JournalEntriesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${ProjectName}-JournalEntries"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: entryId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: entryId
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  UserCredentialsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${ProjectName}-UserCredentials"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: tradingSystem
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: tradingSystem
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+        KMSMasterKeyId: !Ref TradingJournalKMSKey
+
+  AccountDataTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${ProjectName}-AccountData"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: accountId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: accountId
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  # S3 Bucket for file storage
+  S3FileBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${ProjectName}-filebucket-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ["*"]
+            AllowedMethods: [GET, PUT, POST, DELETE, HEAD]
+            AllowedOrigins: ["*"]
+            ExposedHeaders: [ETag]
+            MaxAge: 3000
+
+  # Lambda Execution Role
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt UserProfilesTable.Arn
+                  - !GetAtt JournalEntriesTable.Arn
+                  - !GetAtt UserCredentialsTable.Arn
+                  - !GetAtt AccountDataTable.Arn
+        - PolicyName: KMSAccess
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kms:Encrypt
+                  - kms:Decrypt
+                  - kms:ReEncrypt*
+                  - kms:GenerateDataKey*
+                  - kms:DescribeKey
+                Resource: !GetAtt TradingJournalKMSKey.Arn
+
+  # Post Registration Trigger Lambda
+  PostRegistrationTrigger:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-post-registration-trigger"
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          USER_PROFILES_TABLE_NAME: !Ref UserProfilesTable
+          JOURNAL_ENTRIES_TABLE_NAME: !Ref JournalEntriesTable
+          AWS_REGION: !Ref AWS::Region
+      Code:
+        ZipFile: |
+          const { DynamoDBClient, PutItemCommand } = require('@aws-sdk/client-dynamodb');
+          const dynamoClient = new DynamoDBClient({ region: process.env.AWS_REGION });
+          
+          exports.handler = async (event) => {
+            try {
+              const userId = event.request.userAttributes.sub;
+              const email = event.request.userAttributes.email;
+              
+              const userProfile = {
+                userId: { S: userId },
+                dataType: { S: 'profile' },
+                email: { S: email },
+                createdAt: { S: new Date().toISOString() },
+                preferences: { M: { theme: { S: 'dark' } } },
+                status: { S: 'active' }
+              };
+              
+              await dynamoClient.send(new PutItemCommand({
+                TableName: process.env.USER_PROFILES_TABLE_NAME,
+                Item: userProfile
+              }));
+              
+              return event;
+            } catch (error) {
+              console.error('Post-registration error:', error);
+              return event;
+            }
+          };
+
+  # Lambda permission for Cognito trigger
+  PostRegistrationTriggerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref PostRegistrationTrigger
+      Action: lambda:InvokeFunction
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt UserPool.Arn
+
+  # API Gateway
+  RestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub "${ProjectName}-api"
+      Description: "PFMON Trading Journal API"
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  # API Gateway Authorizer
+  ApiAuthorizer:
+    Type: AWS::ApiGateway::Authorizer
+    Properties:
+      Name: CognitoAuthorizer
+      Type: COGNITO_USER_POOLS
+      IdentitySource: method.request.header.Authorization
+      RestApiId: !Ref RestApi
+      ProviderARNs:
+        - !GetAtt UserPool.Arn
+
+  # User Profile API Lambda
+  UserProfileApiFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-user-profile-api"
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          USER_PROFILES_TABLE_NAME: !Ref UserProfilesTable
+          COGNITO_USER_POOL_ID: !Ref UserPool
+          AWS_REGION: !Ref AWS::Region
+      Code:
+        ZipFile: |
+          exports.handler = async (event) => {
+            return {
+              statusCode: 200,
+              headers: {
+                'Access-Control-Allow-Origin': '*',
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({ message: 'User Profile API - Deploy full code from lambda-functions folder' })
+            };
+          };
+
+  # Journal API Lambda
+  JournalApiFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-journal-api"
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          JOURNAL_ENTRIES_TABLE_NAME: !Ref JournalEntriesTable
+          COGNITO_USER_POOL_ID: !Ref UserPool
+          AWS_REGION: !Ref AWS::Region
+      Code:
+        ZipFile: |
+          exports.handler = async (event) => {
+            return {
+              statusCode: 200,
+              headers: {
+                'Access-Control-Allow-Origin': '*',
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({ message: 'Journal API - Deploy full code from lambda-functions folder' })
+            };
+          };
+
+  # API Resources and Methods
+  ApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: api
+
+  UserResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref ApiResource
+      PathPart: user
+
+  ProfileResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref UserResource
+      PathPart: profile
+
+  JournalResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref ApiResource
+      PathPart: journal
+
+  # Profile API Methods
+  ProfileGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref ProfileResource
+      HttpMethod: GET
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref ApiAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${UserProfileApiFunction.Arn}/invocations"
+
+  ProfilePutMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref ProfileResource
+      HttpMethod: PUT
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref ApiAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${UserProfileApiFunction.Arn}/invocations"
+
+  # Journal API Methods
+  JournalGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref JournalResource
+      HttpMethod: GET
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref ApiAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${JournalApiFunction.Arn}/invocations"
+
+  JournalPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref JournalResource
+      HttpMethod: POST
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref ApiAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${JournalApiFunction.Arn}/invocations"
+
+  # Lambda Permissions for API Gateway
+  UserProfileApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref UserProfileApiFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "${RestApi}/*/ANY/*"
+
+  JournalApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref JournalApiFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "${RestApi}/*/ANY/*"
+
+  # API Deployment
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - ProfileGetMethod
+      - ProfilePutMethod
+      - JournalGetMethod
+      - JournalPostMethod
+    Properties:
+      RestApiId: !Ref RestApi
+      StageName: prod
+
+  # Amplify App
+  AmplifyApp:
+    Type: AWS::Amplify::App
+    Properties:
+      Name: !Sub "${ProjectName}-app"
+      Repository: https://github.com/your-username/trading-journal-repo
+      Platform: WEB
+      EnvironmentVariables:
+        - Name: REACT_APP_USER_POOL_ID
+          Value: !Ref UserPool
+        - Name: REACT_APP_USER_POOL_CLIENT_ID
+          Value: !Ref UserPoolClient
+        - Name: REACT_APP_IDENTITY_POOL_ID
+          Value: !Ref IdentityPool
+        - Name: REACT_APP_S3_BUCKET
+          Value: !Ref S3FileBucket
+        - Name: REACT_APP_API_ENDPOINT
+          Value: !Sub "https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
+
+  AmplifyBranch:
+    Type: AWS::Amplify::Branch
+    Properties:
+      AppId: !GetAtt AmplifyApp.AppId
+      BranchName: main
+      EnableAutoBuild: true
+
+Outputs:
+  UserPoolId:
+    Description: Cognito User Pool ID
+    Value: !Ref UserPool
+    Export:
+      Name: !Sub "${ProjectName}-UserPoolId"
+
+  UserPoolClientId:
+    Description: Cognito User Pool Client ID
+    Value: !Ref UserPoolClient
+    Export:
+      Name: !Sub "${ProjectName}-UserPoolClientId"
+
+  IdentityPoolId:
+    Description: Cognito Identity Pool ID
+    Value: !Ref IdentityPool
+    Export:
+      Name: !Sub "${ProjectName}-IdentityPoolId"
+
+  S3BucketName:
+    Description: S3 Bucket Name
+    Value: !Ref S3FileBucket
+    Export:
+      Name: !Sub "${ProjectName}-S3BucketName"
+
+  ApiEndpoint:
+    Description: API Gateway Endpoint URL
+    Value: !Sub "https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
+    Export:
+      Name: !Sub "${ProjectName}-ApiEndpoint"
+
+  AmplifyAppURL:
+    Description: Amplify App URL
+    Value: !Sub "https://main.${AmplifyApp.DefaultDomain}"
+    Export:
+      Name: !Sub "${ProjectName}-AmplifyAppURL"
+
+  KMSKeyId:
+    Description: KMS Key ID for encryption
+    Value: !Ref TradingJournalKMSKey
+    Export:
+      Name: !Sub "${ProjectName}-KMSKeyId"
