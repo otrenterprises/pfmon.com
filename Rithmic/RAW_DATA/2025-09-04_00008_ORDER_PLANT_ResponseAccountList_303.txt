@@ -1,0 +1,37 @@
+================================================================================
+RITHMIC API RAW DATA LOG
+================================================================================
+Timestamp: 2025-09-04T23:07:01.640Z
+Message Counter: 8
+Daily Counter: 8
+
+CONNECTION INFO:
+Plant Name: ORDER_PLANT
+Plant Type: 2
+Gateway URI: wss://rprotocol.rithmic.com:443
+System Name: Rithmic Paper Trading
+
+MESSAGE INFO:
+Success: true
+Message Name: ResponseAccountList
+Template ID: 303
+Error: None
+
+DECODED DATA:
+{
+  "templateId": 303,
+  "userMsg": [
+    "Quick account test"
+  ],
+  "rpCode": [
+    "0"
+  ]
+}
+
+RAW BUFFER INFO:
+Buffer Size: 32 bytes
+Buffer Type: Uint8Array
+
+================================================================================
+End of Log Entry
+================================================================================

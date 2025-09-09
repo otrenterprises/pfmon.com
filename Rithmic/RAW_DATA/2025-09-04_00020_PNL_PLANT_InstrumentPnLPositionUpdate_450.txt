@@ -1,0 +1,62 @@
+================================================================================
+RITHMIC API RAW DATA LOG
+================================================================================
+Timestamp: 2025-09-04T23:09:28.807Z
+Message Counter: 20
+Daily Counter: 20
+
+CONNECTION INFO:
+Plant Name: PNL_PLANT
+Plant Type: 4
+Gateway URI: wss://rprotocol.rithmic.com:443
+System Name: Rithmic Paper Trading
+
+MESSAGE INFO:
+Success: true
+Message Name: InstrumentPnLPositionUpdate
+Template ID: 450
+Error: None
+
+DECODED DATA:
+{
+  "templateId": 450,
+  "isSnapshot": true,
+  "fcmId": "TakeProfitTrader",
+  "ibId": "TakeProfitTrader",
+  "accountId": "TPPRO8135410",
+  "symbol": "ESU5",
+  "exchange": "CME",
+  "productCode": "ES",
+  "instrumentType": "Future",
+  "fillBuyQty": 0,
+  "fillSellQty": 0,
+  "orderBuyQty": 0,
+  "orderSellQty": 0,
+  "buyQty": 0,
+  "sellQty": 0,
+  "dayOpenPnl": 0,
+  "dayClosedPnl": 0,
+  "dayPnl": 0,
+  "dayOpenPnlOffset": 0,
+  "dayClosedPnlOffset": 0,
+  "mtmSecurity": "0.00",
+  "openLongOptionsValue": "0.00",
+  "openShortOptionsValue": "0.00",
+  "closedOptionsValue": "0.00",
+  "optionCashReserved": "0.00",
+  "openPositionPnl": "0.00",
+  "openPositionQuantity": 0,
+  "closedPositionPnl": "0.00",
+  "closedPositionQuantity": 0,
+  "netQuantity": 0,
+  "ssboe": 1757027369,
+  "usecs": 197000
+}
+
+RAW BUFFER INFO:
+Buffer Size: 257 bytes
+Buffer Type: Uint8Array
+
+================================================================================
+End of Log Entry
+================================================================================

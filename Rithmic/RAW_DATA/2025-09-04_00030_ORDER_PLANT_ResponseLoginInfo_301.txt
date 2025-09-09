@@ -1,0 +1,39 @@
+================================================================================
+RITHMIC API RAW DATA LOG
+================================================================================
+Timestamp: 2025-09-04T23:21:17.071Z
+Message Counter: 30
+Daily Counter: 30
+
+CONNECTION INFO:
+Plant Name: ORDER_PLANT
+Plant Type: 2
+Gateway URI: wss://rprotocol.rithmic.com:443
+System Name: Rithmic Paper Trading
+
+MESSAGE INFO:
+Success: true
+Message Name: ResponseLoginInfo
+Template ID: 301
+Error: None
+
+DECODED DATA:
+{
+  "templateId": 301,
+  "rpCode": [
+    "0"
+  ],
+  "fcmId": "TakeProfitTrader",
+  "ibId": "TakeProfitTrader",
+  "firstName": "Chris",
+  "lastName": "Ficorilli",
+  "userType": 3
+}
+
+RAW BUFFER INFO:
+Buffer Size: 76 bytes
+Buffer Type: Uint8Array
+
+================================================================================
+End of Log Entry
+================================================================================

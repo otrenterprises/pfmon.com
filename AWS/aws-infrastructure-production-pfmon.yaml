@@ -1,0 +1,951 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'PFMON Trading Journal - Production Infrastructure with Lambda Functions and API Gateway'
+
+# ========================================
+# PFMON DEDICATED AWS ACCOUNT INFRASTRUCTURE
+# ========================================
+# 
+# This template is configured for deployment in the dedicated PFMON AWS account (784321184692).
+# It creates a complete infrastructure stack from scratch without dependencies on existing resources.
+# 
+# INFRASTRUCTURE COMPONENTS:
+# 
+# AUTHENTICATION & AUTHORIZATION:
+# - Cognito User Pool with configurable MFA and password policies
+# - Cognito Identity Pool for federated access
+# - IAM roles for authenticated users and Lambda execution
+# 
+# DATA STORAGE:
+# - DynamoDB tables: UserProfiles, JournalEntries, UserCredentials, AccountData
+# - S3 bucket for user file storage with versioning and lifecycle policies
+# - KMS encryption for sensitive data (UserCredentials table)
+# 
+# SERVERLESS COMPUTE:
+# - Lambda functions: post-registration-trigger, user-profile-api, journal-api
+# - Shared JWT layer: arn:aws:lambda:us-east-1:784321184692:layer:pfmon-jwt-v2:1
+# - API Gateway with Cognito authorization and CORS support
+# 
+# HOSTING (Optional):
+# - AWS Amplify app for React frontend deployment
+# - Custom domain support via Route53 (if configured)
+# 
+# DEPLOYMENT CONFIGURATION:
+# - Lambda deployment source: pfmon-cloudfront-deployment S3 bucket
+# - Environment-specific resource naming and tagging
+# - Production security features (MFA, deletion protection, point-in-time recovery)
+# 
+# REQUIRED S3 DEPLOYMENT BUCKET CONTENTS:
+# pfmon-cloudfront-deployment/
+# ├── post-registration-trigger.zip
+# ├── api-user-profiles.zip
+# └── api-journal-entries.zip
+# 
+# SECURITY FEATURES:
+# - KMS encryption for sensitive credentials
+# - Cognito JWT authentication for all API endpoints
+# - S3 bucket policies restricting access to user-owned folders
+# - DynamoDB row-level security with Cognito identity conditions
+# 
+# Last Updated: September 8, 2025
+# 
+# ========================================
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: pfmon
+    Description: Name of the project for resource naming
+    
+  Environment:
+    Type: String
+    Default: dev
+    Description: Environment (dev, test, prod)
+    AllowedValues: [dev, test, prod]
+
+  DomainName:
+    Type: String
+    Description: Your domain name (e.g., pfmon.com)
+    Default: pfmon.com
+
+  HostedZoneId:
+    Type: String
+    Description: Route53 Hosted Zone ID for your domain (optional)
+    Default: ""
+
+  GitHubRepo:
+    Type: String
+    Description: GitHub repository for Amplify deployment
+    Default: ""
+
+Conditions:
+  HasHostedZone: !Not [!Equals [!Ref HostedZoneId, ""]]
+  HasGitHubRepo: !Not [!Equals [!Ref GitHubRepo, ""]]
+  IsProduction: !Equals [!Ref Environment, "prod"]
+
+Resources:
+  # ========================================
+  # ENCRYPTION & SECURITY
+  # ========================================
+  
+  TradingJournalKMSKey:
+    Type: AWS::KMS::Key
+    DeletionPolicy: !If [IsProduction, "Retain", "Delete"]
+    UpdateReplacePolicy: !If [IsProduction, "Retain", "Delete"]
+    Properties:
+      Description: !Sub "KMS key for ${ProjectName} Trading Journal encryption"
+      KeyPolicy:
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+          - Sid: Allow Lambda functions to use the key
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+            Resource: "*"
+
+  TradingJournalKMSKeyAlias:
+    Type: AWS::KMS::Alias
+    DeletionPolicy: !If [IsProduction, "Retain", "Delete"]
+    UpdateReplacePolicy: !If [IsProduction, "Retain", "Delete"]
+    Properties:
+      AliasName: !Sub "alias/${ProjectName}-${Environment}-key"
+      TargetKeyId: !Ref TradingJournalKMSKey
+
+  # ========================================
+  # COGNITO AUTHENTICATION
+  # ========================================
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    DeletionPolicy: !If [IsProduction, "Retain", "Delete"]
+    UpdateReplacePolicy: !If [IsProduction, "Retain", "Delete"]
+    Properties:
+      UserPoolName: !Sub "${ProjectName}-${Environment}-UserPool"
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      UsernameConfiguration:
+        CaseSensitive: false
+      Policies:
+        PasswordPolicy:
+          MinimumLength: !If [IsProduction, 12, 8]
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: !If [IsProduction, true, false]
+          RequireUppercase: true
+      LambdaConfig:
+        PostConfirmation: !GetAtt PostRegistrationTrigger.Arn
+      UserPoolTags:
+        Environment: !Ref Environment
+        Project: !Ref ProjectName
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub "${ProjectName}-${Environment}-client"
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_PASSWORD_AUTH
+      SupportedIdentityProviders:
+        - COGNITO
+      CallbackURLs:
+        - http://localhost:3000
+        - !If 
+          - IsProduction
+          - !Sub "https://app.${DomainName}"
+          - !Sub "https://${ProjectName}-${Environment}.${DomainName}"
+      LogoutURLs:
+        - http://localhost:3000
+        - !If 
+          - IsProduction
+          - !Sub "https://app.${DomainName}"
+          - !Sub "https://${ProjectName}-${Environment}.${DomainName}"
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - email
+        - openid
+        - profile
+      AllowedOAuthFlowsUserPoolClient: true
+      AccessTokenValidity: !If [IsProduction, 60, 1440]  # 1 hour prod, 24 hours dev
+      IdTokenValidity: !If [IsProduction, 60, 1440]
+      RefreshTokenValidity: !If [IsProduction, 30, 90]   # 30 days prod, 90 days dev
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Sub "${ProjectName}-${Environment}-auth"
+      UserPoolId: !Ref UserPool
+
+  IdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: !Sub "${ProjectName}-${Environment}-IdentityPool"
+      AllowUnauthenticatedIdentities: false
+      CognitoIdentityProviders:
+        - ClientId: !Ref UserPoolClient
+          ProviderName: !GetAtt UserPool.ProviderName
+
+  # ========================================
+  # IAM ROLES
+  # ========================================
+
+  AuthenticatedRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                "cognito-identity.amazonaws.com:aud": !Ref IdentityPool
+              "ForAnyValue:StringLike":
+                "cognito-identity.amazonaws.com:amr": authenticated
+      Policies:
+        - PolicyName: S3UserFolderAccess
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: 
+                  - !Sub 
+                    - "arn:aws:s3:::${S3FileBucket}/users/${CognitoSub}/*"
+                    - CognitoSub: "${cognito-identity.amazonaws.com:sub}"
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !GetAtt S3FileBucket.Arn
+                Condition:
+                  StringLike:
+                    "s3:prefix": 
+                      !Sub 
+                        - "users/${CognitoSub}/*"
+                        - CognitoSub: "${cognito-identity.amazonaws.com:sub}"
+        - PolicyName: DynamoDBUserAccess
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt UserProfilesTable.Arn
+                  - !GetAtt JournalEntriesTable.Arn
+                  - !GetAtt UserCredentialsTable.Arn
+                  - !GetAtt AccountDataTable.Arn
+                Condition:
+                  ForAllValues:StringEquals:
+                    "dynamodb:LeadingKeys": 
+                      - !Sub 
+                        - "${CognitoSub}"
+                        - CognitoSub: "${cognito-identity.amazonaws.com:sub}"
+
+  UnauthenticatedRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                "cognito-identity.amazonaws.com:aud": !Ref IdentityPool
+              "ForAnyValue:StringLike":
+                "cognito-identity.amazonaws.com:amr": unauthenticated
+      Policies:
+        - PolicyName: UnauthenticatedUserPolicy
+          PolicyDocument:
+            Statement:
+              - Effect: Deny
+                Action: "*"
+                Resource: "*"
+
+  IdentityPoolRoleAttachment:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    Properties:
+      IdentityPoolId: !Ref IdentityPool
+      Roles:
+        authenticated: !GetAtt AuthenticatedRole.Arn
+        unauthenticated: !GetAtt UnauthenticatedRole.Arn
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-${Environment}-lambda-execution-role"
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt UserProfilesTable.Arn
+                  - !GetAtt JournalEntriesTable.Arn
+                  - !GetAtt UserCredentialsTable.Arn
+                  - !GetAtt AccountDataTable.Arn
+        - PolicyName: KMSAccess
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kms:Encrypt
+                  - kms:Decrypt
+                  - kms:ReEncrypt*
+                  - kms:GenerateDataKey*
+                  - kms:DescribeKey
+                Resource: !GetAtt TradingJournalKMSKey.Arn
+
+  # ========================================
+  # DYNAMODB TABLES
+  # ========================================
+
+  UserProfilesTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: !If [IsProduction, "Retain", "Delete"]
+    UpdateReplacePolicy: !If [IsProduction, "Retain", "Delete"]
+    Properties:
+      TableName: !Sub "${ProjectName}-${Environment}-UserProfiles"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: dataType
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: dataType
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: !If [IsProduction, true, false]
+      DeletionProtectionEnabled: !If [IsProduction, true, false]
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  JournalEntriesTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: !If [IsProduction, "Retain", "Delete"]
+    UpdateReplacePolicy: !If [IsProduction, "Retain", "Delete"]
+    Properties:
+      TableName: !Sub "${ProjectName}-${Environment}-JournalEntries"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: entryId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: entryId
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: !If [IsProduction, true, false]
+      DeletionProtectionEnabled: !If [IsProduction, true, false]
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  UserCredentialsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: !If [IsProduction, "Retain", "Delete"]
+    UpdateReplacePolicy: !If [IsProduction, "Retain", "Delete"]
+    Properties:
+      TableName: !Sub "${ProjectName}-${Environment}-UserCredentials"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: tradingSystem
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: tradingSystem
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: !If [IsProduction, true, false]
+      DeletionProtectionEnabled: !If [IsProduction, true, false]
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+        KMSMasterKeyId: !Ref TradingJournalKMSKey
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  AccountDataTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: !If [IsProduction, "Retain", "Delete"]
+    UpdateReplacePolicy: !If [IsProduction, "Retain", "Delete"]
+    Properties:
+      TableName: !Sub "${ProjectName}-${Environment}-AccountData"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: accountId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: accountId
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: !If [IsProduction, true, false]
+      DeletionProtectionEnabled: !If [IsProduction, true, false]
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ========================================
+  # S3 STORAGE
+  # ========================================
+
+  S3FileBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: !If [IsProduction, "Retain", "Delete"]
+    UpdateReplacePolicy: !If [IsProduction, "Retain", "Delete"]
+    Properties:
+      BucketName: !Sub "${ProjectName}-${Environment}-filebucket-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: !If [IsProduction, "Enabled", "Suspended"]
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldVersions
+            Status: Enabled
+            NoncurrentVersionExpirationInDays: !If [IsProduction, 90, 30]
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ["*"]
+            AllowedMethods: [GET, PUT, POST, DELETE, HEAD]
+            AllowedOrigins: 
+              - http://localhost:3000
+              - !If 
+                - IsProduction
+                - !Sub "https://app.${DomainName}"
+                - !Sub "https://${ProjectName}-${Environment}.${DomainName}"
+            ExposedHeaders: [ETag]
+            MaxAge: 3000
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # S3 Bucket Policy for Cognito Identity Pool Access
+  S3FileBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3FileBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: CognitoIdentityPoolAccess
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt AuthenticatedRole.Arn
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+            Resource: !Sub "arn:aws:s3:::${S3FileBucket}/users/*"
+          - Sid: CognitoIdentityPoolListBucket
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt AuthenticatedRole.Arn
+            Action: s3:ListBucket
+            Resource: !GetAtt S3FileBucket.Arn
+            Condition:
+              StringLike:
+                "s3:prefix": "users/*"
+
+  # ========================================
+  # LAMBDA LAYER
+  # ========================================
+
+  # Using pre-deployed JWT layer: arn:aws:lambda:us-east-1:784321184692:layer:pfmon-jwt-v2:1
+
+  # ========================================
+  # LAMBDA FUNCTIONS
+  # ========================================
+
+  PostRegistrationTrigger:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${Environment}-post-registration-trigger"
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          USER_PROFILES_TABLE_NAME: !Ref UserProfilesTable
+          JOURNAL_ENTRIES_TABLE_NAME: !Ref JournalEntriesTable
+          REGION: !Ref AWS::Region
+          ENVIRONMENT: !Ref Environment
+      Layers:
+        - "arn:aws:lambda:us-east-1:784321184692:layer:pfmon-jwt-v2:1"
+      Code:
+        S3Bucket: pfmon-cloudfront-deployment
+        S3Key: "post-registration-trigger.zip"
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  PostRegistrationTriggerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref PostRegistrationTrigger
+      Action: lambda:InvokeFunction
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt UserPool.Arn
+
+  UserProfileApiFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${Environment}-user-profile-api"
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          USER_PROFILES_TABLE_NAME: !Ref UserProfilesTable
+          COGNITO_USER_POOL_ID: !Ref UserPool
+          REGION: !Ref AWS::Region
+          ENVIRONMENT: !Ref Environment
+      Layers:
+        - "arn:aws:lambda:us-east-1:784321184692:layer:pfmon-jwt-v2:1"
+      Code:
+        S3Bucket: pfmon-cloudfront-deployment
+        S3Key: "api-user-profiles.zip"
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  JournalApiFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${Environment}-journal-api"
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          JOURNAL_ENTRIES_TABLE_NAME: !Ref JournalEntriesTable
+          COGNITO_USER_POOL_ID: !Ref UserPool
+          REGION: !Ref AWS::Region
+          ENVIRONMENT: !Ref Environment
+      Layers:
+        - "arn:aws:lambda:us-east-1:784321184692:layer:pfmon-jwt-v2:1"
+      Code:
+        S3Bucket: pfmon-cloudfront-deployment
+        S3Key: "api-journal-entries.zip"
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ========================================
+  # API GATEWAY
+  # ========================================
+
+  RestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub "${ProjectName}-${Environment}-api"
+      Description: !Sub "PFMON Trading Journal API - ${Environment}"
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  ApiAuthorizer:
+    Type: AWS::ApiGateway::Authorizer
+    Properties:
+      Name: CognitoAuthorizer
+      Type: COGNITO_USER_POOLS
+      IdentitySource: method.request.header.Authorization
+      RestApiId: !Ref RestApi
+      ProviderARNs:
+        - !GetAtt UserPool.Arn
+
+  # API Resources - Updated to match CLI deployment structure
+  ApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: api
+
+  UsersResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref ApiResource
+      PathPart: users
+
+  UserIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref UsersResource
+      PathPart: '{userId}'
+
+  ProfileResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref UserIdResource
+      PathPart: profile
+
+  JournalResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref UserIdResource
+      PathPart: journal
+
+  # API Methods - Complete CRUD operations matching CLI deployment
+  
+  # Profile Endpoints (GET, POST)
+  ProfileGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref ProfileResource
+      HttpMethod: GET
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref ApiAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${UserProfileApiFunction.Arn}/invocations"
+
+  ProfilePostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref ProfileResource
+      HttpMethod: POST
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref ApiAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${UserProfileApiFunction.Arn}/invocations"
+
+  ProfilePutMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref ProfileResource
+      HttpMethod: PUT
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref ApiAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${UserProfileApiFunction.Arn}/invocations"
+
+  ProfileOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref ProfileResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: "200"
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: "200"
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: false
+            method.response.header.Access-Control-Allow-Methods: false
+            method.response.header.Access-Control-Allow-Origin: false
+
+  # Journal Endpoints (GET, POST, PUT, DELETE)
+  JournalGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref JournalResource
+      HttpMethod: GET
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref ApiAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${JournalApiFunction.Arn}/invocations"
+
+  JournalPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref JournalResource
+      HttpMethod: POST
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref ApiAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${JournalApiFunction.Arn}/invocations"
+
+  JournalPutMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref JournalResource
+      HttpMethod: PUT
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref ApiAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${JournalApiFunction.Arn}/invocations"
+
+  JournalDeleteMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref JournalResource
+      HttpMethod: DELETE
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref ApiAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${JournalApiFunction.Arn}/invocations"
+
+  JournalOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref JournalResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: "200"
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: "200"
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: false
+            method.response.header.Access-Control-Allow-Methods: false
+            method.response.header.Access-Control-Allow-Origin: false
+
+  # Lambda Permissions
+  UserProfileApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt UserProfileApiFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApi}/*/*"
+
+  JournalApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt JournalApiFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApi}/*/*"
+
+  # API Deployment
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - ProfileGetMethod
+      - JournalGetMethod
+    Properties:
+      RestApiId: !Ref RestApi
+      StageName: !Ref Environment
+
+  # ========================================
+  # AMPLIFY HOSTING (Optional)
+  # ========================================
+
+  AmplifyApp:
+    Type: AWS::Amplify::App
+    Condition: HasGitHubRepo
+    Properties:
+      Name: !Sub "${ProjectName}-${Environment}-app"
+      Repository: !Ref GitHubRepo
+      Platform: WEB
+      EnvironmentVariables:
+        - Name: REACT_APP_USER_POOL_ID
+          Value: !Ref UserPool
+        - Name: REACT_APP_USER_POOL_CLIENT_ID
+          Value: !Ref UserPoolClient
+        - Name: REACT_APP_IDENTITY_POOL_ID
+          Value: !Ref IdentityPool
+        - Name: REACT_APP_S3_BUCKET
+          Value: !Ref S3FileBucket
+        - Name: REACT_APP_API_ENDPOINT
+          Value: !Sub "https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}"
+        - Name: REACT_APP_ENVIRONMENT
+          Value: !Ref Environment
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  AmplifyBranch:
+    Type: AWS::Amplify::Branch
+    Condition: HasGitHubRepo
+    Properties:
+      AppId: !GetAtt AmplifyApp.AppId
+      BranchName: !If [IsProduction, "main", !Ref Environment]
+      EnableAutoBuild: true
+
+# ========================================
+# OUTPUTS
+# ========================================
+
+Outputs:
+  UserPoolId:
+    Description: Cognito User Pool ID
+    Value: !Ref UserPool
+    Export:
+      Name: !Sub "${ProjectName}-${Environment}-UserPoolId"
+
+  UserPoolClientId:
+    Description: Cognito User Pool Client ID
+    Value: !Ref UserPoolClient
+    Export:
+      Name: !Sub "${ProjectName}-${Environment}-UserPoolClientId"
+
+  IdentityPoolId:
+    Description: Cognito Identity Pool ID
+    Value: !Ref IdentityPool
+    Export:
+      Name: !Sub "${ProjectName}-${Environment}-IdentityPoolId"
+
+  S3BucketName:
+    Description: S3 Bucket Name
+    Value: !Ref S3FileBucket
+    Export:
+      Name: !Sub "${ProjectName}-${Environment}-S3BucketName"
+
+  ApiEndpoint:
+    Description: API Gateway Endpoint URL
+    Value: !Sub "https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}"
+    Export:
+      Name: !Sub "${ProjectName}-${Environment}-ApiEndpoint"
+
+  AmplifyAppURL:
+    Description: Amplify App URL
+    Value: !If 
+      - HasGitHubRepo
+      - !Sub "https://${Environment}.${AmplifyApp.DefaultDomain}"
+      - "Not configured - no GitHub repo provided"
+    Export:
+      Name: !Sub "${ProjectName}-${Environment}-AmplifyAppURL"
+
+  KMSKeyId:
+    Description: KMS Key ID for encryption
+    Value: !Ref TradingJournalKMSKey
+    Export:
+      Name: !Sub "${ProjectName}-${Environment}-KMSKeyId"
+
+  PostRegistrationTriggerArn:
+    Description: Post Registration Lambda Function ARN
+    Value: !GetAtt PostRegistrationTrigger.Arn
+    Export:
+      Name: !Sub "${ProjectName}-${Environment}-PostRegistrationTriggerArn"
+
+  LambdaExecutionRoleArn:
+    Description: Lambda Execution Role ARN
+    Value: !GetAtt LambdaExecutionRole.Arn
+    Export:
+      Name: !Sub "${ProjectName}-${Environment}-LambdaExecutionRoleArn"
+
+  CognitoDomainURL:
+    Description: Cognito Hosted UI Domain URL
+    Value: !Sub "https://${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com"
+    Export:
+      Name: !Sub "${ProjectName}-${Environment}-CognitoDomainURL"

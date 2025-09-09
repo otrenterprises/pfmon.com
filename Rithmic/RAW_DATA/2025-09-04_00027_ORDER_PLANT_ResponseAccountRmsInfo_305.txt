@@ -1,0 +1,52 @@
+================================================================================
+RITHMIC API RAW DATA LOG
+================================================================================
+Timestamp: 2025-09-04T23:16:57.330Z
+Message Counter: 27
+Daily Counter: 27
+
+CONNECTION INFO:
+Plant Name: ORDER_PLANT
+Plant Type: 2
+Gateway URI: wss://rprotocol.rithmic.com:443
+System Name: Rithmic Paper Trading
+
+MESSAGE INFO:
+Success: true
+Message Name: ResponseAccountRmsInfo
+Template ID: 305
+Error: None
+
+DECODED DATA:
+{
+  "templateId": 305,
+  "rqHandlerRpCode": [
+    "0"
+  ],
+  "presenceBits": 1023,
+  "fcmId": "TakeProfitTrader",
+  "ibId": "TakeProfitTrader",
+  "accountId": "TPPRO2095187",
+  "currency": "USD",
+  "status": "active",
+  "algorithm": "Max Loss",
+  "autoLiquidateCriteria": "Multiple Simultaneous Criteria",
+  "autoLiquidate": 1,
+  "disableOnAutoLiquidate": 1,
+  "autoLiquidateThreshold": 2000,
+  "autoLiquidateMaxMinAccountBalance": 50000,
+  "lossLimit": 90000,
+  "minAccountBalance": 48000,
+  "buyLimit": 60,
+  "maxOrderQuantity": 120,
+  "sellLimit": 60,
+  "checkMinAccountBalance": false
+}
+
+RAW BUFFER INFO:
+Buffer Size: 202 bytes
+Buffer Type: Uint8Array
+
+================================================================================
+End of Log Entry
+================================================================================

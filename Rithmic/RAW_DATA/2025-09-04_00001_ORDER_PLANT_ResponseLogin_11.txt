@@ -1,0 +1,44 @@
+================================================================================
+RITHMIC API RAW DATA LOG
+================================================================================
+Timestamp: 2025-09-04T23:06:43.767Z
+Message Counter: 1
+Daily Counter: 1
+
+CONNECTION INFO:
+Plant Name: ORDER_PLANT
+Plant Type: 2
+Gateway URI: wss://rprotocol.rithmic.com:443
+System Name: Rithmic Paper Trading
+
+MESSAGE INFO:
+Success: true
+Message Name: ResponseLogin
+Template ID: 11
+Error: None
+
+DECODED DATA:
+{
+  "templateId": 11,
+  "templateVersion": "5.34",
+  "userMsg": [
+    "Clean ConnectionManager login"
+  ],
+  "rpCode": [
+    "0"
+  ],
+  "fcmId": "TakeProfitTrader",
+  "ibId": "TakeProfitTrader",
+  "countryCode": "US",
+  "stateCode": "CA",
+  "uniqueUserId": "rproto_srvr_05_ritpz04039@rithmic_04_prod_dmz_domain:12680",
+  "heartbeatInterval": 60
+}
+
+RAW BUFFER INFO:
+Buffer Size: 175 bytes
+Buffer Type: Uint8Array
+
+================================================================================
+End of Log Entry
+================================================================================

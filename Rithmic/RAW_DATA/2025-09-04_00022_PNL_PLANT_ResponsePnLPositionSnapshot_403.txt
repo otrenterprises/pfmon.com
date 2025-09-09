@@ -1,0 +1,34 @@
+================================================================================
+RITHMIC API RAW DATA LOG
+================================================================================
+Timestamp: 2025-09-04T23:09:28.823Z
+Message Counter: 22
+Daily Counter: 22
+
+CONNECTION INFO:
+Plant Name: PNL_PLANT
+Plant Type: 4
+Gateway URI: wss://rprotocol.rithmic.com:443
+System Name: Rithmic Paper Trading
+
+MESSAGE INFO:
+Success: true
+Message Name: ResponsePnLPositionSnapshot
+Template ID: 403
+Error: None
+
+DECODED DATA:
+{
+  "templateId": 403,
+  "rpCode": [
+    "0"
+  ]
+}
+
+RAW BUFFER INFO:
+Buffer Size: 10 bytes
+Buffer Type: Uint8Array
+
+================================================================================
+End of Log Entry
+================================================================================

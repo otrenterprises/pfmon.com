@@ -1,0 +1,71 @@
+================================================================================
+RITHMIC API RAW DATA LOG
+================================================================================
+Timestamp: 2025-09-04T23:09:28.813Z
+Message Counter: 21
+Daily Counter: 21
+
+CONNECTION INFO:
+Plant Name: PNL_PLANT
+Plant Type: 4
+Gateway URI: wss://rprotocol.rithmic.com:443
+System Name: Rithmic Paper Trading
+
+MESSAGE INFO:
+Success: true
+Message Name: AccountPnLPositionUpdate
+Template ID: 451
+Error: None
+
+DECODED DATA:
+{
+  "templateId": 451,
+  "isSnapshot": true,
+  "fcmId": "TakeProfitTrader",
+  "ibId": "TakeProfitTrader",
+  "accountId": "TPPRO8135410",
+  "fillBuyQty": 0,
+  "fillSellQty": 0,
+  "orderBuyQty": 0,
+  "orderSellQty": 0,
+  "buyQty": 0,
+  "sellQty": 0,
+  "openLongOptionsValue": "0.00",
+  "openShortOptionsValue": "0.00",
+  "closedOptionsValue": "0.00",
+  "optionCashReserved": "0.00",
+  "openPositionPnl": "0.00",
+  "openPositionQuantity": 0,
+  "closedPositionPnl": "0.00",
+  "closedPositionQuantity": 0,
+  "netQuantity": 0,
+  "excessBuyMargin": "",
+  "marginBalance": "",
+  "minMarginBalance": "",
+  "minAccountBalance": "48000.00",
+  "accountBalance": "50452.25",
+  "cashOnHand": "50452.25",
+  "optionClosedPnl": "0.00",
+  "percentMaximumAllowableLoss": "",
+  "optionOpenPnl": "0.00",
+  "mtmAccount": "0.00",
+  "availableBuyingPower": "",
+  "usedBuyingPower": "",
+  "reservedBuyingPower": "",
+  "excessSellMargin": "",
+  "dayOpenPnl": "0.00",
+  "dayClosedPnl": "0.00",
+  "dayPnl": "0.00",
+  "dayOpenPnlOffset": "0.00",
+  "dayClosedPnlOffset": "0.00",
+  "ssboe": 1757027369,
+  "usecs": 197000
+}
+
+RAW BUFFER INFO:
+Buffer Size: 295 bytes
+Buffer Type: Uint8Array
+
+================================================================================
+End of Log Entry
+================================================================================

@@ -1,0 +1,50 @@
+{
+  "name": "pfmon-trading-journal-dev",
+  "version": "0.1.0-dev",
+  "description": "PFMON - Trading Journal Development Version (pfmon.com infrastructure)",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@aws-amplify/ui-react": "^6.12.0",
+    "@headlessui/react": "^1.7.13",
+    "@heroicons/react": "^2.0.16",
+    "autoprefixer": "^10.4.13",
+    "aws-amplify": "^6.15.5",
+    "chart.js": "^4.2.1",
+    "clsx": "^1.2.1",
+    "date-fns": "^2.29.3",
+    "jsonwebtoken": "^9.0.2",
+    "oidc-client-ts": "^3.3.0",
+    "picocolors": "^1.1.1",
+    "postcss": "^8.4.21",
+    "react": "^18.2.0",
+    "react-chartjs-2": "^5.2.0",
+    "react-dom": "^18.2.0",
+    "react-oidc-context": "^3.3.0",
+    "react-router-dom": "^6.8.0",
+    "react-scripts": "5.0.1",
+    "tailwindcss": "^3.2.4"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "devDependencies": {
+    "@types/react": "^18.0.0",
+    "@types/react-dom": "^18.0.0"
+  }
+}

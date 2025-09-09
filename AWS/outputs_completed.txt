@@ -1,0 +1,59 @@
+AmplifyAppURL
+Not configured - no GitHub repo provided
+
+Amplify App URL
+pfmon-dev-AmplifyAppURL
+
+ApiEndpoint
+https://birvxbio8i.execute-api.us-east-1.amazonaws.com/dev
+
+API Gateway Endpoint URL
+pfmon-dev-ApiEndpoint
+
+CognitoDomainURL
+https://pfmon-dev-auth.auth.us-east-1.amazoncognito.com
+
+Cognito Hosted UI Domain URL
+pfmon-dev-CognitoDomainURL
+
+IdentityPoolId
+us-east-1:8085b6b8-1536-4bc0-84dd-fa0d94fe49db
+
+Cognito Identity Pool ID
+pfmon-dev-IdentityPoolId
+
+KMSKeyId
+b0f98a06-3cb0-4da9-aa63-d65bf59f16e3
+
+KMS Key ID for encryption
+pfmon-dev-KMSKeyId
+
+LambdaExecutionRoleArn
+arn:aws:iam::784321184692:role/pfmon-dev-lambda-execution-role
+
+Lambda Execution Role ARN
+pfmon-dev-LambdaExecutionRoleArn
+
+PostRegistrationTriggerArn
+arn:aws:lambda:us-east-1:784321184692:function:pfmon-dev-post-registration-trigger
+
+Post Registration Lambda Function ARN
+pfmon-dev-PostRegistrationTriggerArn
+
+S3BucketName
+pfmon-dev-filebucket-784321184692
+
+S3 Bucket Name
+pfmon-dev-S3BucketName
+
+UserPoolClientId
+3f1gluq46f2ijmnm8gti3umb44
+
+Cognito User Pool Client ID
+pfmon-dev-UserPoolClientId
+
+UserPoolId
+us-east-1_Rntx6lIEb
+
+Cognito User Pool ID
+pfmon-dev-UserPoolId

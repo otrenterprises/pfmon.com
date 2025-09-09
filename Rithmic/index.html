@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clean Proto-Factory System Test</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="header">
+        <h1>🚀 Clean Proto-Factory System</h1>
+        <p>Dynamic message handling with Connection Manager + Proto Factory + Universal Decoder</p>
+    </div>
+    
+    <div class="container">
+        <!-- Connection Panel -->
+        <div class="panel">
+            <h3>🔗 Connection Manager</h3>
+            
+            <div class="form-group">
+                <label for="system">Trading System:</label>
+                <select id="system">
+                    <option value="">Select System</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="gateway">Gateway:</label>
+                <select id="gateway">
+                    <option value="">Select Gateway</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="username">Username:</label>
+                <input type="text" id="username" placeholder="Enter username">
+            </div>
+            
+            <div class="form-group">
+                <label for="password">Password:</label>
+                <input type="password" id="password" placeholder="Enter password">
+            </div>
+            
+            <div class="checkbox-group">
+                <input type="checkbox" id="allPlants">
+                <label for="allPlants">Connect to all plants (ORDER + PNL + TICKER + HISTORY)</label>
+            </div>
+            
+            <div class="button-group">
+                <button id="connectBtn">Connect</button>
+                <button id="disconnectBtn" disabled>Disconnect All</button>
+            </div>
+            
+            <div class="status-display">
+                <div id="connectionStatus">Ready to connect...</div>
+            </div>
+        </div>
+        
+        <!-- System Status Panel -->
+        <div class="panel">
+            <h3>📊 System Status</h3>
+            
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value" id="connectionsCount">0</div>
+                    <div class="stat-label">Active Connections</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="messagesReceived">0</div>
+                    <div class="stat-label">Messages Received</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="messagesSent">0</div>
+                    <div class="stat-label">Messages Sent</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="knownMessages">0</div>
+                    <div class="stat-label">Known Message Types</div>
+                </div>
+            </div>
+            
+            <div class="button-group">
+                <button id="statsBtn">Refresh Stats</button>
+                <button id="clearLogBtn">Clear Log</button>
+            </div>
+            
+            <div class="data-logger-controls">
+                <h4>📊 Raw Data Logger</h4>
+                <div class="checkbox-group">
+                    <input type="checkbox" id="enableDataLogger" checked>
+                    <label for="enableDataLogger">Enable Raw Data Logging</label>
+                </div>
+                <div class="checkbox-group">
+                    <input type="checkbox" id="logBinaryData">
+                    <label for="logBinaryData">Include Binary Data (Hex Dumps)</label>
+                </div>
+                <div class="logger-stats">
+                    <small id="loggerStats">Logger: Enabled | Messages: 0 | Files: 0</small>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Message Sender -->
+    <div class="panel">
+        <h3>📤 Dynamic Message Sender</h3>
+        
+        <div class="message-options">
+            <div class="form-group">
+                <label for="plantType">Target Plant:</label>
+                <select id="plantType">
+                    <option value="">Select Plant</option>
+                    <option value="2">ORDER_PLANT</option>
+                    <option value="4">PNL_PLANT</option>
+                    <option value="1">TICKER_PLANT</option>
+                    <option value="3">HISTORY_PLANT</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="messageType">Message Type:</label>
+                <select id="messageType">
+                    <option value="">Select Message</option>
+                </select>
+            </div>
+        </div>
+        
+        <div class="form-group">
+            <label for="messageData">Message Data (JSON):</label>
+            <textarea id="messageData" rows="4" style="width: 100%; padding: 12px; background: #0f0f23; border: 2px solid #16213e; border-radius: 6px; color: #cccccc; font-family: 'Courier New', monospace;">{}</textarea>
+        </div>
+        
+        <!-- Dynamic form container -->
+        <div id="dynamicFormContainer" style="display: none;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin: 10px 0;">
+                <label style="font-weight: bold; color: #ffffff;">Dynamic Field Inputs:</label>
+                <button type="button" id="toggleFormMode" style="padding: 8px 16px; background: #007acc; color: white; border: none; border-radius: 4px; cursor: pointer;">Switch to JSON</button>
+            </div>
+            <div id="dynamicFields"></div>
+        </div>
+        
+        <div class="button-group">
+            <button id="sendMessageBtn" disabled>Send Message</button>
+            <button id="loadTemplateBtn">Load Template</button>
+            <button id="getAccountsBtn" disabled>Get Accounts (Quick Test)</button>
+        </div>
+    </div>
+    
+    <!-- Log Output -->
+    <div class="panel">
+        <h3>📋 System Log</h3>
+        <div id="logOutput" class="log-output"></div>
+    </div>
+
+    <script type="module" src="app.js"></script>
+</body>
+</html>
