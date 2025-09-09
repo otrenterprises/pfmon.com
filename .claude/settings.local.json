@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(aws cloudformation validate-template:*)"
+      "Bash(aws cloudformation validate-template:*)",
+      "Bash(git config:*)"
     ],
     "deny": [],
     "ask": []
