@@ -477,3 +477,923 @@ Bot errors to look for:
 **Failure modes & regime fit.** It suits normal and neutral-centre days. It fails when an inside open turns into a normal-variation or trend day: the first probe fails, the second is accepted, and VP-05 territory begins. It also fails on midday news and when the prior VA is so narrow that T1 is trivial (skipped by the rr check).
 
 **Relations.** It is the session-scale twin of VP-12. When a prior-day edge coincides with a COMP edge, only one of them may act on that level. VP-05 may take the opposite side later the same day after an IB break, and one-position-per-instrument keeps them sequential. VP-11's HOLD branch can conflict when a single-print zone sits at the edge. PA-family sweep-and-reclaim triggers are the price-only analogue.
+
+## VP-04 Overnight inventory correction
+
+**At a glance**
+
+| Style | Typical hold | Instruments | Regime | Evidence | Automation |
+|---|---|---|---|---|---|
+| Scalp | 10 – 60 min | ES/MES, NQ/MNQ; CL/MCL only after its RTH and ON windows are confirmed | Transition at the open | C | Med |
+
+**Concept basis.** The overnight profile is kept separate from RTH so it can give the overnight high, low and POC and the "inventory" read. That separation is standard platform practice: Sierra Chart offers "Use Separate Profile for Evening Session" ([Sierra Chart Volume by Price](https://www.sierrachart.com/index.php?page=doc/StudiesReference.php&ID=141)). Dalton's view, as summarized by LuxAlgo, is that the open is uniquely informative because overnight inventory, news and institutional participation collide there, and the pre-bell references include the overnight range ([LuxAlgo, Open Types](https://www.luxalgo.com/library/concept/open-types/)).
+
+The idea that lopsided overnight inventory gets corrected early in RTH is Market Profile lore that the notes could not verify from Dalton's own text. Two facts also argue for caution:
+
+- Overnight volume is thin, so volume bars stretch over hours at night ([Volume Clock](https://c.mql5.com/forextsd/forum/173/the_volume_clock_-_insights_into_the_high_frequency_paradigm.pdf)). An ON POC therefore rests on comparatively few contracts.
+- The one peer-reviewed intraday result points the other way. In SPY, the first half-hour return measured from the prior close, which includes the overnight move, predicted a same-direction last half-hour ([Gao, Han, Li & Zhou 2018](https://econpapers.repec.org/RePEc:eee:jfinec:v:129:y:2018:i:2:p:394-414)).
+
+Hence the design. VP-04 trades only after price has crossed back through the open against the inventory, takes the correction no further than ON value, and is gone by the end of the IB. Grade C. Profile windows: [03](03%20Volume%20profile%20across%20timeframes.md).
+
+**Chart stack**
+
+| Role | Time-bar version | Volume-bar version |
+|---|---|---|
+| CONTEXT | PROFILE(ON)[-1], final at T0; OPEN_TIER; news calendar | Same (clock) |
+| LOCATION | RTHO; ON VAH/VAL/POC | Same |
+| SETUP | Inventory flag at T0: LONG if RTHO > ON.VAH, SHORT if RTHO < ON.VAL | Same |
+| TRIGGER | First M5 close at least 1 tick through RTHO against the inventory, in [T0+5, T0+30] | First VB-B (opened at or after T0) close at least 1 tick through RTHO against the inventory, in [T0, T0+30] |
+| MANAGEMENT | M5; time exit at T0+60 | VB-B; same clock exit |
+
+Stays on clock time in both versions: the ON window (17:00 CT to T0, excluding the 15:00–16:00 CT post-close hour per [03](03%20Volume%20profile%20across%20timeframes.md)), T0, the trigger window and the T0+60 exit.
+
+**Context filter.** OPEN_TIER is IN_VALUE or OUT_VALUE; OUT_RANGE opens belong to VP-02. No tier-1 release fell between 17:00 CT and T0: NFP and CPI print at 07:30 CT, and inventory built around news is not positional. The ON range is at least 0.5 × its 20-session median.
+
+**Location.** RTHO, the line the inventory side must defend.
+
+**Setup.** INV = LONG or SHORT at T0. If RTHO lies inside the ON value area, the setup is NEUTRAL and does not arm.
+
+**Trigger.** With LONG inventory, the first TRIGGER-layer close at or below RTHO − 1 tick inside the window. SHORT inventory mirrors it.
+
+**Entry order.** Limit at the trigger close, valid 2 TRIGGER-layer bars.
+
+**Risk & management**
+
+| Item | Rule |
+|---|---|
+| Initial stop | RTH high so far + BUF(M5) for a correction short (RTH low − BUF(M5) for a correction long), with the ATR floor |
+| Sizing | Common R rule |
+| T1 / T2 | T1: the near ON value edge, 1 tick in front (ON.VAH for a short), 50%. T2: ON.POC, 1 tick in front, 50%. Requires rr(T2) ≥ 1.5 |
+| Breakeven / trail / time | Stop to breakeven at T1. Exit everything at T0+60 |
+| Cancel / invalidation | No trigger by T0+30 → EXPIRED. Blackout → CANCELLED |
+
+**Filters.** An opening setup by design, valid T0 to T0+60. Skip days with a pre-open tier-1 release. Common volatility band. One attempt per day.
+
+**Automation spec.**
+- IDLE → ARMED at T0 if INV ≠ NEUTRAL and the context holds.
+- ARMED → ORDER_PENDING on the trigger.
+- ARMED → EXPIRED at T0+30.
+- ORDER_PENDING → EXPIRED after 2 bars.
+- IN_POSITION → MANAGED → CLOSED, at the latest at T0+60.
+
+```
+on T0:
+  ON = PROFILE(ON)[-1]; P = PROFILE(RTH)[-1]
+  if OPEN_TIER(RTHO, P) == OUT_RANGE or tier1_release_between(17:00 CT, T0) or ON.range < 0.5*median20(ON.range):
+      done_for_day
+  inv = LONG if RTHO > ON.VAH else SHORT if RTHO < ON.VAL else NEUTRAL
+  if inv == NEUTRAL: done_for_day
+  state = ARMED;  d = DOWN if inv == LONG else UP              # trade against the inventory
+on TRIGGER-layer close in window:
+  if closed_through(RTHO, d, ticks=1):
+      stop = floor_stop(rth_extreme_so_far(-d) +/- BUF(M5), ATR(L))
+      T1, T2 = near_edge(ON, d) -/+ 1 tick, ON.POC -/+ 1 tick
+      if rr(T2) >= 1.5: send limit(bar.c, expire=2 bars) with bracket(stop, [T1 50%, T2 50%])
+on T0+30 while ARMED: EXPIRED;   on T0+60: exit_market("time")
+```
+
+| Parameter | Default | Reason |
+|---|---|---|
+| Inventory definition | RTHO beyond the ON value area | Uses the separate ON profile directly; no extra threshold |
+| ON range floor | 0.5 × median ON range (20 sessions) | A tiny overnight has no inventory worth correcting |
+| News exclusion | Any tier-1 release between 17:00 CT and T0 | News inventory is a reaction, not a position |
+| Trigger | Close at least 1 tick through RTHO in [T0+5, T0+30] | The inventory side failing to defend the open |
+| Targets | ON near edge, then ON POC | Correction to overnight value, no further |
+| Minimum rr(T2) | 1.5 | Short holding window needs a payoff |
+| Time exit | T0+60 | Inventory correction is an opening phenomenon; the intraday momentum result warns against holding |
+| Max attempts | 1 per day | One open |
+
+**Visual review checklist.**
+1. Draw the ON volume profile from 17:00 CT to T0 only, separate from RTH, and mark its VAH, VAL and POC.
+2. Confirm RTHO beyond the ON value area on the logged side.
+3. Confirm no tier-1 release overnight and an adequate ON range.
+4. Find the first M5 or VB-B close through RTHO against the inventory inside the window.
+5. Check the stop beyond the RTH extreme so far and the targets at the ON edge and POC. The position is flat by T0+60.
+
+Bot errors to look for:
+- A full ETH or 24-hour profile used as "ON".
+- The 15:00–16:00 CT post-close hour included.
+- ES's ON window applied to CL.
+- A trigger on the VB that straddles T0.
+- A trigger fired before T0+5 on time bars.
+
+**Failure modes & regime fit.** It fits quiet overnights that drift to one extreme and an inside or near-value open. It fails when the inventory is right, as on gap-and-go days where the overnight move is the start of a drive (the Gao result's scenario), on news days (excluded) and when the ON POC sits on so few contracts that it is not a meaningful level.
+
+**Relations.** Opposes VP-02 by construction: OUT_RANGE opens are excluded, and a close back through RTHO contradicts an OD. Can stack with VP-01 or VP-03 in the same direction (for example, a correction from an open below value toward value). One-position-per-instrument means VP-04 fires first and blocks the later entry. Overlaps conceptually with PA-family opening-range failure triggers.
+
+## VP-05 IB extension with value migration
+
+**At a glance**
+
+| Style | Typical hold | Instruments | Regime | Evidence | Automation |
+|---|---|---|---|---|---|
+| Intraday | 1 – 5 h | ES/MES, NQ/MNQ, CL/MCL | Imbalance (normal-variation and trend days) | C; location B (IBH/IBL are clock-time LEVELS) | Low |
+
+**Concept basis.** Sierra defines the initial balance as a number of sub-periods from the profile start (two 30-minute periods make a one-hour IB) and reports extensions beyond it with configurable percentage lines ([Sierra Chart TPO docs](https://www.sierrachart.com/index.php?page=doc/StudiesReference/TimePriceOpportunityCharts.html)). The day-type taxonomy describes two cases ([LuxAlgo, Day-type Taxonomy](https://www.luxalgo.com/library/concept/day-type-taxonomy/)):
+
+- A **normal-variation** day extends the IB on one side, though sources disagree on how far.
+- A **trend** day has a narrow IB, persistent one-way extension and a close near the extreme.
+
+On trend days "the trade is with the extension" ([therighttrader, Trend Day](https://therighttrader.com/learn/trading-strategies/trend-day)). The day-type frequencies conflict and come without methodology. One blog cites ~50% normal variation and <5% trend days ([bullbear-university](https://bullbear-university.blogspot.com/2013/09/anticipating-trading-days-market.html)). A NexusFi post on ES reports 54% normal variation, ~16% trend and 25% neutral ([NexusFi](https://nexusfi.com/showthread.php?p=823821)). As [03](03%20Volume%20profile%20across%20timeframes.md) concludes, a one-tick IB break is a filter, not an event. Any edge has to come from the width condition, the direction filter and the follow-through.
+
+The direction filter is prior-day value migration ([LuxAlgo, Value Migration](https://www.luxalgo.com/library/concept/value-migration/)). It uses final profiles only, which keeps this proposal free of developing values. There is indirect support for the same-direction persistence the trade relies on:
+
+- SPY's first half-hour return predicts its last half-hour ([Gao, Han, Li & Zhou 2018](https://econpapers.repec.org/RePEc:eee:jfinec:v:129:y:2018:i:2:p:394-414)).
+- Stop orders cluster just beyond salient extremes such as the IB high ([Osler 2003](https://ideas.repec.org/a/bla/jfinan/v58y2003i5p1791-1819.html)).
+
+Grade C for the setup. The IB extremes are clock-time LEVELS, whose evidence 07 grades B.
+
+**Chart stack**
+
+| Role | Time-bar version | Volume-bar version |
+|---|---|---|
+| CONTEXT | REGIME(D) from PROFILE(RTH)[-1] vs [-2]; tiebreak IB midpoint vs PROFILE(RTH)[-1].POC | Same (clock) |
+| SETUP | IB = high/low of [T0, T0+60); IB width within band | Same (clock) |
+| LOCATION | IBH (long) or IBL (short) | Same |
+| TRIGGER | First M5 close at least 1 tick beyond the IB extreme in direction d, after T0+60 | First VB-B close at least 1 tick beyond, after T0+60 |
+| MANAGEMENT | M30 soft exit on a close back inside the IB; broker bracket | Same M30 soft exit (clock) |
+
+Stays on clock time in both versions: T0, the IB window, the 20-session IB median, the break window and the M30 soft exit.
+
+**Context filter.** If REGIME(D) is IMB or TENT, d is its direction. If it is BALANCE or EXPANSION, d = UP when the IB midpoint is above PROFILE(RTH)[-1].POC and DOWN when below; no trade if equal. The IB width must be between 0.3× and 1.0× its 20-session median. The narrow flag (below 0.6×) is logged for diagnosis only.
+
+**Location.** IBH for d = UP, IBL for d = DOWN.
+
+**Setup.** The IB completes at T0+60.
+
+**Trigger.** The first TRIGGER-layer close at least 1 tick beyond the IB extreme in d, between T0+60 and TC − 120 min.
+
+**Entry order.** Limit at the IB extreme + 1 tick (a retest of the broken edge), valid 30 minutes. A logged signal-only variant uses a stop-limit 1 tick beyond the trigger bar, so missed non-retest breakouts are measured.
+
+**Risk & management**
+
+| Item | Rule |
+|---|---|
+| Initial stop | IB midpoint − BUF(M30) for a long (+ for a short), with the ATR floor |
+| Sizing | Common R rule |
+| T1 / T2 | T1: IBH + 0.5 × IB width (the 150% total-range line), 50%. T2: IBH + 1.0 × IB width (the 200% line), 50%. Mirrored for shorts |
+| Breakeven / trail / time | Stop to breakeven at T1. Soft exit at market on any M30 close back inside the IB. Flat by TC − 5 |
+| Cancel / invalidation | 30 minutes without a fill → EXPIRED. An M30 close back inside the IB before the fill → INVALIDATED. A trade beyond the opposite IB extreme before the fill → INVALIDATED (neutral-day risk) |
+
+**Filters.** RTH only. Break window T0+60 to TC − 120. Common news and volatility rules. One attempt per day, in direction d only.
+
+**Automation spec.**
+- IDLE → ARMED at T0+60 if the context and width hold.
+- ARMED → ORDER_PENDING on the trigger close.
+- ORDER_PENDING → EXPIRED after 30 minutes, or → INVALIDATED.
+- IN_POSITION → MANAGED → CLOSED via T2, the stop, the soft exit or the time exit.
+
+```
+on T0+60:
+  IBH, IBL = high/low(T0, T0+60); W = IBH - IBL;  P1, P2 = PROFILE(RTH)[-1], PROFILE(RTH)[-2]
+  if not (0.3 <= W / median20(IB width) <= 1.0): done_for_day
+  r = REGIME(D)
+  d = r.dir if r in {IMB_*, TENT_*} else (UP if mid(IBH,IBL) > P1.POC else DOWN if mid < P1.POC else None)
+  if d is None: done_for_day
+  edge = IBH if d == UP else IBL;  state = ARMED;  log(narrow = W < 0.6*median20)
+on TRIGGER-layer close (M5 | VB-B), T0+60 <= t <= TC-120:
+  if closed_beyond(edge, d, ticks=1):
+      stop = floor_stop(mid(IBH,IBL) -/+ BUF(M30), ATR(L))
+      send limit(edge +/- 1 tick, expire=30 min) with bracket(stop, [edge +/- 0.5W (50%), edge +/- 1.0W (50%)])
+on M30 close: if inside IB: (state in {ARMED, ORDER_PENDING}) -> INVALIDATED else exit_market("soft")
+```
+
+| Parameter | Default | Reason |
+|---|---|---|
+| IB | First 60 min of RTH (two M30) | Market Profile convention; Sierra's definition |
+| Width band | 0.3–1.0 × median IB (20) | Excludes wide-IB days, where extension targets are far and containment is likely, and degenerate IBs; the notes' 0.6× narrow mark is logged |
+| Direction | REGIME(D), else IB-mid vs prior POC | "In the direction of value migration" from final profiles only |
+| Trigger | M5/VB-B close ≥ 1 tick beyond | The notes' one-tick trade-through, made bar-close-based |
+| Entry | Retest limit, 30 min | Small R; logged stop-limit variant measures what retests miss |
+| Stop | IB midpoint | Gives clean geometry: T1 ≈ 1R, T2 ≈ 2R |
+| Targets | +0.5 and +1.0 IB width beyond the edge | The notes' 1.5× and 2× IB extensions |
+| Soft exit | M30 close back inside the IB | A failed extension |
+| Max attempts | 1 per day | One IB per day |
+
+**Visual review checklist.**
+1. Use a Sierra TPO chart with 30-minute sub-periods starting at T0 and an IB of two sub-periods. Confirm the IB lines match the engine.
+2. Set extension lines at +50% and +100% of IB width beyond the IB extremes. Check which convention the platform's IE% uses before comparing.
+3. Confirm the direction from yesterday's vs the day before's value areas, or the IB midpoint vs yesterday's POC.
+4. Find the first M5 or VB-B close beyond the IB extreme after T0+60. Check the retest limit, the stop at the IB midpoint and the soft exit on an M30 close back inside.
+
+Bot errors to look for:
+- An IB computed from the Globex start.
+- An IB on a half-day treated as normal.
+- A direction computed from today's developing profile.
+- A trigger fired during the IB window.
+- Extension lines measured from the wrong extreme.
+
+**Failure modes & regime fit.** It suits normal-variation and trend days that start in the direction of yesterday's migration. It fails on neutral days that extend both sides (the first extension reverses), on afternoon reversals and on breaks just before scheduled midday releases. With trend days somewhere between under 5% and about 16% of sessions, most fills will reach T1 at best.
+
+**Relations.** VP-02 is the earlier entry on the same days. VP-06 and VP-10 fire on the same trend days in the same direction, so treat them as one risk unit (one position per instrument enforces it). VP-03 may have faded the IB-forming rotation earlier. VP-13 is the composite-scale analogue. PA-family opening-range breakouts are the price-only cousin.
+
+## VP-06 dPOC-trailed trend-day hold
+
+**At a glance**
+
+| Style | Typical hold | Instruments | Regime | Evidence | Automation |
+|---|---|---|---|---|---|
+| Intraday | 2 h – to the close | ES/MES, NQ/MNQ, CL/MCL | Imbalance (trend days) | C | Med (developing profile, trailing) |
+
+**Concept basis.** The developing POC (dPOC) is the POC recomputed as the session progresses. The engine samples it at every M30 close and logs it at every trigger ([03](03%20Volume%20profile%20across%20timeframes.md); [07](07%20Automation%20architecture.md)). The value-migration reading gives the idea: "a POC migrating with the VA strengthens the read", while a POC anchored in the old area argues the migration is tentative ([LuxAlgo, Value Migration](https://www.luxalgo.com/library/concept/value-migration/); [Bookmap, Value Migration Explained](https://bookmap.com/blog/value-migration-explained-how-markets-shift-from-one-area-of-acceptance-to-another)). Trend days show little rotation and close near the extreme ([LuxAlgo, Day-type Taxonomy](https://www.luxalgo.com/library/concept/day-type-taxonomy/)). The intraday-momentum result is the only peer-reviewed hint that holding into the close pays: the last half-hour tends to continue the first ([Gao, Han, Li & Zhou 2018](https://econpapers.repec.org/RePEc:eee:jfinec:v:129:y:2018:i:2:p:394-414)).
+
+Using the dPOC both as confirmation and as a trailing stop is this file's extension of day-over-day migration to the developing profile. It is untested, and it depends on developing values, which 07 flags as the main audit risk. Grade C.
+
+**Chart stack**
+
+| Role | Time-bar version | Volume-bar version |
+|---|---|---|
+| CONTEXT | REGIME(D) not against d; VALUE_REL(PROFILE(RTH)[0], PROFILE(RTH)[-1]) is HIGHER or OVERLAP_UP for longs, sampled at M30 closes | Same (clock sampling) |
+| SETUP | dPOC migration: dPOC(t) − dPOC(t − 2 M30) ≥ 0.5 × ATR(M30) at an M30 close | Same (clock) |
+| LOCATION | The dPOC, the stop anchor | Same |
+| TRIGGER | The same M30 close, with price between dPOC + 0.25 × ATR(M30) and dPOC + 1.0 × ATR(M30) | First VB-A close inside that band during the next M30 period |
+| MANAGEMENT | Stop trailed under the dPOC at each M30 close | Stop trailed under the dPOC (as of each VB-A close) at each VB-A close |
+
+Stays on clock time in both versions: T0, the M30 sampling of dPOC and developing VA, the setup window and the flat-by time.
+
+**Context filter.** For longs, REGIME(D) is not IMB_DOWN and the developing VA (logged with `as_of`) is HIGHER or OVERLAP_UP versus PROFILE(RTH)[-1]. Shorts mirror.
+
+**Location.** The dPOC at the trigger, logged.
+
+**Setup.** A two-period dPOC migration of at least 0.5 × ATR(M30) in direction d.
+
+**Trigger.** Price inside the band [dPOC + 0.25, dPOC + 1.0] × ATR(M30) at the TRIGGER-layer close. Above the band the trade would be chasing; below it the stop would be too close to the dPOC.
+
+**Entry order.** Limit at the trigger close ± SLIP(L), valid 60 seconds.
+
+**Risk & management**
+
+| Item | Rule |
+|---|---|
+| Initial stop | dPOC − BUF(M30) for a long, with the ATR floor |
+| Sizing | Common R rule |
+| T1 / T2 | No fixed target. A single position is held to the close or stopped out |
+| Breakeven / trail / time | At each TRIGGER-layer close (M30, or VB-A in the volume version), stop = max(stop, dPOC(as_of) − BUF(M30)). It only ratchets, and it is modified only if it moved at least 2 ticks. Flat by TC − 5. Flatten at T−2 before an afternoon FOMC statement |
+| Cancel / invalidation | Price above the band → no trade on this close; it may re-arm at a later close. Window ends → EXPIRED |
+
+**Filters.** Setup window T0+90 to TC − 120. Common news and volatility rules. One attempt per day.
+
+**Automation spec.**
+- IDLE → ARMED when the context and migration hold at an M30 close.
+- ARMED → ORDER_PENDING when price is in the band (same close or next VB-A).
+- ARMED → IDLE if the band is missed.
+- ORDER_PENDING → EXPIRED after 60 s.
+- IN_POSITION → MANAGED, with ratchet updates → CLOSED.
+
+```
+on M30 close t (T0+90 <= t <= TC-120):
+  dev = PROFILE(RTH)[0] (as_of=t); P = PROFILE(RTH)[-1]
+  d = UP if VALUE_REL(dev, P) in {HIGHER, OVERLAP_UP} else DOWN if VALUE_REL(dev, P) in {LOWER, OVERLAP_DOWN} else None
+  if d is None or REGIME(D) == IMB(-d): return
+  if sgn(d) * (dev.dPOC - dPOC_at(t - 60 min)) >= 0.5 * ATR(M30): state = ARMED; log(dev.dPOC, as_of=t)
+on TRIGGER-layer close while ARMED (M30 at t | VB-A within next M30):
+  x = sgn(d) * (bar.c - dPOC_now)
+  if 0.25*ATR(M30) <= x <= 1.0*ATR(M30):
+      send limit(bar.c +/- SLIP(L), ttl=60s) with bracket(stop = floor_stop(dPOC_now -/+ BUF(M30), ATR(L)))
+  else: state = IDLE
+on TRIGGER-layer close in position: new = dPOC_now -/+ BUF(M30); if improves(stop, new) by >= 2 ticks: modify_stop(new)
+```
+
+| Parameter | Default | Reason |
+|---|---|---|
+| Migration lookback | 2 M30 periods | Two brackets, matching the acceptance tradition |
+| Migration size | 0.5 × ATR(M30) | Half a typical bracket's range; rejects one-row dPOC flips |
+| Entry band | 0.25–1.0 × ATR(M30) beyond the dPOC | Neither chasing nor sitting on the stop |
+| Window | T0+90 to TC − 120 | IB plus one bracket of developing data; time left to trend |
+| Trail | dPOC − BUF(M30), ratchet only, 2-tick hysteresis | Value-based trail; message hygiene per 07 |
+| Targets | None | A trend-day hold; the trail is the exit |
+| Max attempts | 1 per day | One trend day per day |
+
+**Visual review checklist.**
+1. Replay the session to each logged M30 close. Confirm the dPOC and developing VA printed in the decision record, not the end-of-day profile.
+2. Confirm the developing value is higher (or overlapping higher) than yesterday's.
+3. Check the two-period dPOC rise against 0.5 × ATR(M30), and the entry inside the band.
+4. Step through the stop path. It may only rise, and only at TRIGGER-layer closes.
+
+Bot errors to look for:
+- The end-of-day POC used instead of the dPOC as of the trigger.
+- The stop loosened when the dPOC retreated.
+- Stop modifications sent on every tick.
+- A POC tie-rule mismatch causing the dPOC to flip between two equal rows. The rule is nearest the middle, then lower.
+
+**Failure modes & regime fit.** It suits trend days with steady value build-up. On thin, fast trend days the dPOC lags far behind price, so the band check skips the trade. On double-distribution days the dPOC jumps late and the trail sits deep. It also fails on afternoon reversals and on FOMC afternoons (flattened).
+
+**Relations.** It shares days and direction with VP-02, VP-05 and VP-10 (one risk unit). It uses the same "POC as fair price" mechanism as VP-15 on a different anchor, the session rather than the swing leg. It conflicts with VP-03 by regime.
+
+## VP-07 Breakout-leg LVN hold
+
+**At a glance**
+
+| Style | Typical hold | Instruments | Regime | Evidence | Automation |
+|---|---|---|---|---|---|
+| Intraday | 20 min – 3 h | ES/MES, NQ/MNQ, CL/MCL | Imbalance: a fresh breakout from yesterday's value | C | High (ANCH + LVN detection) |
+
+**Concept basis.** An LVN is "a local trough where very little volume ever traded" ([LuxAlgo, HVN/LVN detector](https://www.luxalgo.com/library/indicator/CHxGnqBD-volume-profile-with-hvn-lvn-detector/)). Practitioners use LVNs in contradictory ways:
+
+- as targets ([faders substack](https://faders.substack.com/p/volume-profile));
+- as entry zones because "large players tend to skip price during discovery" ([nemissa substack](https://nemissa.substack.com/p/trading-with-the-volume-profile));
+- as rejection points on pullbacks ([TradeZella, Auction Market Strategy](https://www.tradezella.com/strategies/auction-market-strategy)).
+
+Only regime resolves the contradiction ([03](03%20Volume%20profile%20across%20timeframes.md)). The case here is narrow. After a breakout, the LVN separating old value from new acceptance is the "air pocket" that should not be re-accepted, and re-acceptance means the breakout failed ([06](06%20How%20the%20dimensions%20interact.md)). In Kyle's terms an LVN records high past price impact ([Kyle 1985](https://econometricsociety.org/publications/econometrica/1985/11/01/continuous-auctions-and-insider-trading)). Assuming the same impact will hold in future is a hypothesis, because liquidity is not stationary.
+
+Profiling the leg between two swings is standard practitioner practice ([ForexTester, Fixed Range Volume Profile](https://forextester.com/blog/fixed-range-volume-profile/); [FuturesHive](https://www.futureshive.com/blog/volume-profile-trading-strategy-2025)) and has been automated per leg ([TradingView, Swing Volume Profile Pro](https://id.tradingview.com/script/7yozLqCv-Swing-Volume-Profile-Pro-WillyAlgoTrader/)). Grade C.
+
+**Anchor detector.** This proposal uses 07's alternative detector, Pivot(L,3,3). Under the default 2 × ATR ZigZag, B is confirmed only after a 2-ATR retrace. That would usually consume the pullback, and often the LVN, before the profile exists.
+
+**Chart stack**
+
+| Role | Time-bar version | Volume-bar version |
+|---|---|---|
+| CONTEXT | VALUE_REL(PROFILE(RTH)[0], PROFILE(RTH)[-1]) is HIGHER or OVERLAP_UP at B.confirm_ts (logged); REGIME(D) not IMB_DOWN | Same (clock) |
+| LOCATION | Separation LVN zone of PROFILE(ANCH(A→B)), anchors from Pivot(M15,3,3) | Anchors from Pivot(VB-A,3,3) |
+| SETUP | Pullback into the LVN zone after B.confirm_ts | Same |
+| TRIGGER | CLOSE_BACK(M5, zone.hi, UP, 3) with no M5 close below zone.lo | CLOSE_BACK(VB-B, zone.hi, UP, 3), same condition |
+| MANAGEMENT | M15 bars for the time stop | VB-A bars for the time stop |
+
+Stays on clock time in both versions: the prior RTH profile, T0 and the RTH window, and the developing-value sample at B.confirm_ts.
+
+**Context filter.** The leg must start in RTH (A.pivot_ts ≥ T0), at or below PROFILE(RTH)[-1].VAH, and end at least 0.5 × ATR(M15) above it (B ≥ VAH + 0.5 × ATR(M15)). Requiring an RTH start keeps thin overnight volume from manufacturing fake LVNs. Today's developing value must be HIGHER or OVERLAP_UP versus yesterday. Shorts mirror the rule.
+
+**Location.** Choose the highest LVN of ANCH(A→B) that has an HVN on both sides and lies between VAH − BUF(M15) and B − 0.25 × (B − A). If none exists, there is no setup.
+
+**Setup.** At B.confirm_ts, price must still be at least 0.25 × ATR(M15) above zone.hi, meaning the location is untouched; otherwise the setup EXPIRES with reason "consumed before confirmation". Price then trades into the zone.
+
+**Trigger.** A TRIGGER-layer close back above zone.hi by at least 1 tick, within 3 bars of trading into the zone, with no TRIGGER-layer close below zone.lo. It must come within 8 M15 bars of activation and before TC − 60.
+
+**Entry order.** Limit at the trigger close, valid 2 TRIGGER-layer bars.
+
+**Risk & management**
+
+| Item | Rule |
+|---|---|
+| Initial stop | zone.lo − BUF(M15), with the ATR floor |
+| Sizing | Common R rule |
+| T1 / T2 | T1: B, 1 tick in front, 50%. T2: REF_BEYOND(B, UP, rr ≥ 2.0, within 2 × ATR(M30)), 50%; if none, 100% at T1 |
+| Breakeven / trail / time | Stop to breakeven at T1. Time stop after 8 M15 bars in the trade without T1. Flat by TC − 5 |
+| Cancel / invalidation | An M15 close below zone.lo before the trigger → INVALIDATED. A trade below A → INVALIDATED. A new confirmed swing high above B → CANCELLED and re-anchored as a new version. 8 M15 bars after activation without a trigger → EXPIRED |
+
+**Filters.** RTH only, T0+30 to TC − 60. Common rules. One attempt per leg, two per day.
+
+**Automation spec.**
+- IDLE → ARMED at B.confirm_ts when the leg, LVN and untouched checks pass.
+- ARMED → ORDER_PENDING on the trigger.
+- ARMED → INVALIDATED, CANCELLED or EXPIRED.
+- IN_POSITION → MANAGED → CLOSED.
+
+```
+on Swing(H) confirmed on anchor layer L_A (M15 | VB-A) at t = B.confirm_ts:
+  A = last_confirmed_swing_low_before(B); P = PROFILE(RTH)[-1]; dev = PROFILE(RTH)[0] (as_of=t)
+  if A.pivot_ts < T0 or A.price > P.VAH or B.price < P.VAH + 0.5*ATR(M15): return
+  if VALUE_REL(dev, P) not in {HIGHER, OVERLAP_UP} or REGIME(D) == IMB_DOWN: return
+  H = PROFILE(ANCH(A->B));  N = nodes(H, sigma(ANCH))
+  z = highest LVN zone in N with HVN on both sides and P.VAH - BUF(M15) <= z.price <= B.price - 0.25*(B.price - A.price)
+  if z is None or last_price < z.hi + 0.25*ATR(M15): EXPIRED("no LVN / consumed"); return
+  state = ARMED(level_id = hash("LVN", L_A, A.id, B.id))
+on TRIGGER-layer close (M5 | VB-B) while ARMED:
+  if bar.c < z.lo: INVALIDATED
+  elif CLOSE_BACK(L, z.hi, UP, 3):
+      stop = floor_stop(z.lo - BUF(M15), ATR(L))
+      T2 = REF_BEYOND(B.price, UP, rr_min=2.0, max_dist=2*ATR(M30))
+      send limit(bar.c, expire=2 bars) with bracket(stop, [B - 1 tick (50%), T2 (50%)] if T2 else [B - 1 tick (100%)])
+```
+
+| Parameter | Default | Reason |
+|---|---|---|
+| Anchor detector | Pivot(M15,3,3) / Pivot(VB-A,3,3) | Bounds confirmation lag to 3 bars instead of a 2-ATR retrace |
+| Leg start | In RTH, at or below prior VAH | A breakout leg out of yesterday's value |
+| Leg end | ≥ prior VAH + 0.5 × ATR(M15) | Clearly into new territory |
+| LVN choice | Highest two-sided LVN between prior VAH and the upper quarter of the leg | The neck between old value and new acceptance |
+| Untouched margin | 0.25 × ATR(M15) | The location must still be ahead of price when it becomes known |
+| Trigger | CLOSE_BACK(…, 3) above zone.hi | Rejection of the air pocket |
+| Stop | Below the LVN zone | Re-acceptance into the old value means a failed breakout |
+| T2 floor | rr ≥ 2.0 | Only a meaningful extension earns a runner |
+| Time limits | 8 M15 bars to trigger and to T1 | About two hours; stale pullbacks lose the breakout's urgency |
+
+**Visual review checklist.**
+1. Draw ANCH(A→B) from the engine overlay (smoothed histogram, HVN/LVN zones) between A.pivot_ts and B.pivot_ts. Mark B.confirm_ts separately.
+2. Check that A is in RTH at or below yesterday's VAH, and that B is clearly above it.
+3. Check that the LVN has an HVN above and below, and that price was still above the zone at confirmation.
+4. Find the dip into the zone and the close back above it within 3 bars. Check the stop under the zone and the targets.
+
+Bot errors to look for:
+- The profile drawn to a provisional high.
+- Bars after B included in ANCH.
+- An LVN picked from the raw histogram.
+- A one-sided tail labelled as an LVN.
+- Expecting Sierra's raw Peaks and Valleys to match the smoothed nodes. Per [03](03%20Volume%20profile%20across%20timeframes.md), node comparisons are qualitative.
+
+**Failure modes & regime fit.** It suits clean RTH breakouts from yesterday's value with a visible two-humped leg. It fails when breakouts fail, when legs are too steady to produce an LVN, on news, and on fast days where the pullback is over before B confirms (skipped by design).
+
+**Relations.** Owns breakout legs that cross yesterday's VAH with a separation LVN; VP-15 does not arm on those legs. If a prior balance lies ahead within reach, VP-08 owns the leg instead. VP-09 treats LVNs as traverse zones, so an LVN may have only one owner at a time. PA-family breakout-pullback templates are the price-only analogue.
+
+## VP-08 Valentini-style trend model (LVN + aggressor delta)
+
+**At a glance**
+
+| Style | Typical hold | Instruments | Regime | Evidence | Automation |
+|---|---|---|---|---|---|
+| Scalp | 5 – 60 min | ES/MES, NQ/MNQ, CL/MCL | Imbalance: price out of balance and travelling toward a prior balance | C | High (ANCH + LVN + aggressor delta) |
+
+**Concept basis.** The secondary description has four parts ([TradeZella, Auction Market Strategy](https://www.tradezella.com/strategies/auction-market-strategy); [TradeZella, Auction Market Playbook](https://www.tradezella.com/playbooks/auction-market-playbook)):
+
+- The context is a market out of balance and "searching for new value".
+- LVNs are marked on the reclaim leg.
+- The trigger is "big buy aggression hitting right at that LVN on the footprint".
+- The target is the POC inside the prior balance.
+
+Neither page is Valentini's own text, and the description is ambiguous about which balance it means. Following [03](03%20Volume%20profile%20across%20timeframes.md), this proposal reads it as a continuation trade toward the next high-volume area in the trade's direction. The reclaim leg is the impulse that carries price back toward a balance area it left earlier, and the target is that balance's POC.
+
+The footprint requirement is real and is what separates VP-08 from VP-07: the trigger needs aggressor-side volume. TradingView's "up/down volume" is classified by bar direction ("if close >= open… up volume"), not aggressor data, so it cannot host this rule ([TradingView Volume Profile help](https://www.tradingview.com/support/solutions/43000502040-volume-profile/)). Rithmic supplies the data on both paths:
+
+- Live: `LastTrade` carries the aggressor flag, BUY=1/SELL=2.
+- Seeding: template 209's minute profiles carry per-price bid- and ask-aggressor volume ([Rithmic/protos.json](../../Rithmic/protos.json)).
+
+Constant-volume bars make delta comparable from bar to bar, because every bar holds the same contracts ([05](05%20Volume%20bars%20versus%20time%20bars.md)). Grade C.
+
+**Chart stack**
+
+| Role | Time-bar version | Volume-bar version (primary) |
+|---|---|---|
+| CONTEXT | accepted_beyond(PROFILE(RTH)[-1] edge, d) today; target balance TB ahead | Same (clock) |
+| LOCATION | LVN zone on PROFILE(ANCH(A→B)), anchors from Pivot(M5,3,3) | Anchors from Pivot(VB-B,3,3) |
+| SETUP | Pullback into the LVN zone | Same |
+| TRIGGER | M1 bar in the zone, close in its upper half, delta/volume z-score ≥ 2.0 vs the trailing 200 M1 bars | VB-C bar in the zone, close in its upper half, delta z-score ≥ 2.0 vs the trailing 200 VB-C bars |
+| MANAGEMENT | M5; 60-minute time stop | VB-B; same clock time stop |
+
+Stays on clock time in both versions: the prior RTH profile, the M30 acceptance periods, TB's profile periods and the time stop.
+
+**Context filter.**
+1. Today, price has been `accepted_beyond` PROFILE(RTH)[-1].VAH (for d = UP), so it has left yesterday's balance.
+2. A target balance TB lies ahead. TB is the nearest of: the composites of completed balance episodes (runs of at least 3 overlapping sessions) within the last 20 sessions, WEEK[-1] and WEEK[-2]. TB's whole VA must lie beyond the current price in d, and TB.POC must be within 1.0 × ATR(D1).
+3. REGIME(D) is not IMB against d.
+
+**Location.** On ANCH(A→B) of the most recent confirmed impulse leg in d, built from RTH prints only, take the highest two-sided LVN whose zone.hi lies at least 0.25 × ATR(M5) below price at B.confirm_ts.
+
+**Setup.** Price pulls back into the LVN zone.
+
+**Trigger.** A TRIGGER-layer bar that trades inside the zone, closes in the upper half of its own range, and shows aggressive buying.
+
+- Delta is ask-aggressor minus bid-aggressor volume.
+- On VB-C, the bar's delta must reach a z-score of at least 2.0 against the trailing 200 non-partial VB-C bars.
+- On M1, delta/volume is used instead, z-scored the same way.
+
+**Entry order.** Limit at the trigger close, valid 3 TRIGGER-layer bars.
+
+**Risk & management**
+
+| Item | Rule |
+|---|---|
+| Initial stop | zone.lo − BUF(M5), with the ATR floor |
+| Sizing | Common R rule |
+| T1 / T2 | Single target: TB.POC, 1 tick in front, 100%. Requires rr ≥ 2.0 |
+| Breakeven / trail / time | Stop to breakeven once price trades +1R. Time stop 60 min. Scalp blackout flatten applies |
+| Cancel / invalidation | An M5 or VB-B close below zone.lo before the trigger → INVALIDATED. A new confirmed swing extending the leg → CANCELLED and re-anchored. TB.POC traded before the fill → CANCELLED, because the magnet is satisfied |
+
+**Filters.** RTH only, T0+15 to TC − 60, because aggressor reads and fills are poorer in thin overnight books. Common rules. At most one attempt per LVN and two per day.
+
+**Automation spec.**
+- IDLE → ARMED at B.confirm_ts if the context, TB and LVN checks pass.
+- ARMED → ORDER_PENDING on the trigger.
+- ARMED → INVALIDATED or CANCELLED.
+- ORDER_PENDING → EXPIRED after 3 bars.
+- IN_POSITION → MANAGED → CLOSED.
+
+```
+on Swing confirmed on anchor layer (M5 | VB-B) completing impulse leg A->B in direction d:
+  P = PROFILE(RTH)[-1]
+  if not accepted_beyond(P.edge(d), d) today or REGIME(D) == IMB(-d): return
+  TB = nearest([episode composites last 20 sessions] + [WEEK[-1], WEEK[-2]],
+               where VA entirely beyond last_price in d and abs(POC - last_price) <= ATR(D1))
+  if TB is None: return
+  z = highest two-sided LVN of nodes(PROFILE(ANCH(A->B)), sigma(ANCH)) with z.hi <= last_price - 0.25*ATR(M5)   # mirror for shorts
+  if z is None: return
+  state = ARMED(level_id = hash("LVN", layer, A.id, B.id), target = TB.POC)
+on TRIGGER-layer close (VB-C | M1) while ARMED:
+  if traded_in(bar, z) and close_in_upper_half(bar) and zscore(delta_metric(bar), last 200 bars) >= 2.0:
+      stop = floor_stop(z.lo - BUF(M5), ATR(L))
+      if rr(TB.POC) >= 2.0: send limit(bar.c, expire=3 bars) with bracket(stop, [TB.POC -/+ 1 tick (100%)])
+on M5|VB-B close < z.lo while ARMED: INVALIDATED
+```
+
+| Parameter | Default | Reason |
+|---|---|---|
+| Out-of-balance test | `accepted_beyond` yesterday's edge | 03's single acceptance definition |
+| Target balance | Nearest multi-session balance (episode composite, WEEK[-1..-2]) ahead within 1 × ATR(D1) | "POC inside the prior balance", read as the next high-volume area in the trade direction |
+| Anchor detector | Pivot(M5,3,3) / Pivot(VB-B,3,3), RTH legs only | Scalp-scale legs; confirmation lag bounded |
+| Delta metric | Ask-aggressor minus bid-aggressor (VB-C); ratio to bar volume (M1) | Equal-volume bars make raw delta comparable; time bars need normalising |
+| Aggression threshold | z ≥ 2.0 vs the trailing 200 bars | A conventional "unusual" cutoff; 200 VB-C bars is about a fifth of an average day |
+| Close location | Upper half of the bar | Aggression that also moved price, not absorbed aggression |
+| Target / rr | TB.POC only; rr ≥ 2.0 | A single magnet target with an untested hit rate needs payoff |
+| Time stop | 60 min | Scalp horizon |
+
+**Visual review checklist.**
+1. Draw TB's value area and POC (episode composite or prior week) and confirm it lies wholly ahead of price.
+2. Confirm today's acceptance beyond yesterday's value edge (two M30 closes plus the volume share).
+3. Overlay ANCH(A→B) with its LVN zone and B's confirmation marker.
+4. At the trigger bar, inspect the engine-rendered footprint or delta. Delta must be in the bar's buy-aggressor direction and unusually large, and the bar must close in its upper half.
+5. Check the stop under the zone and the target 1 tick in front of TB.POC.
+
+Bot errors to look for:
+- Delta computed from bar direction or the tick rule instead of the aggressor flag.
+- `isSnapshot` prints counted.
+- Seeded `profileNoAggressorVolume` added to one side.
+- A z-score window that crosses the session break or includes partial bars.
+- One huge print, possibly a block-like summary trade, read as "aggression" without inspection.
+
+**Failure modes & regime fit.** It suits directional sessions heading back into an old balance. It fails on **absorption**: large buy delta with no progress means a passive seller is winning, the opposite of the signal. That is why the trigger requires the close in the upper half. It also fails on exhaustion near TB, and when the target is far enough that the scalp horizon expires first. Whether Rithmic delivers CME summary trades or split fills does not change delta totals, but it does change how large individual prints look ([Sierra Chart Chart Settings](https://www.sierrachart.com/index.php?page=doc/ChartSettings.html)).
+
+**Relations.** Owns the leg when a TB destination exists; otherwise VP-07 may own it. If TB.POC is also naked, it is VP-10's target too, and one position per instrument prevents doubling. VP-09 reads LVNs as traverse zones, so LVN ownership applies. The volume-bar trigger is the family's purest use of the independent order-flow dimension, which CX proposals may reuse as a trigger.
+
+## VP-09 LVN air-pocket traverse
+
+**At a glance**
+
+| Style | Typical hold | Instruments | Regime | Evidence | Automation |
+|---|---|---|---|---|---|
+| Scalp | 2 – 30 min | ES/MES, NQ/MNQ, CL/MCL | Imbalance or transition: price leaving an HVN through thin volume | C | High (LVN detection + bar speed) |
+
+**Concept basis.** An LVN that breaks should be traversed quickly ([03](03%20Volume%20profile%20across%20timeframes.md)). In the practitioner hierarchy, higher-dimension LVNs mark where price should travel fast or reject, and the HVNs beyond them mark where it should stall. Two mechanisms are offered:
+
+- **Kyle's λ.** An LVN records high past price impact per contract ([Kyle 1985](https://econometricsociety.org/publications/econometrica/1985/11/01/continuous-auctions-and-insider-trading)). Assuming that impact persists is a hypothesis.
+- **Stop cascades.** Osler found that trends are "unusually rapid" when prices reach levels where stop-losses cluster, and that the effects are significant for hours, not days ([Osler 2002](https://www.newyorkfed.org/medialibrary/media/research/staff_reports/sr150.pdf)). That was shown for round numbers and extremes, not for LVNs.
+
+Constant-volume bars add a clean way to see the traverse. Each bar holds the same contracts, so a wide bar means high impact per contract, and a short-lived bar means urgency. 03 names "fast, wide bars" as what an LVN traverse should look like ([05](05%20Volume%20bars%20versus%20time%20bars.md); [Trading Setups Review](https://www.tradingsetupsreview.com/trading-charts-without-time-range-tick-volume/)). The thesis is speed, so the proposal's distinctive rule is a time stop that exits a traverse that is not fast. Grade C.
+
+**Chart stack**
+
+| Role | Time-bar version | Volume-bar version (primary) |
+|---|---|---|
+| CONTEXT | REGIME(D) not IMB against d | Same (clock) |
+| LOCATION | Two-sided LVN zone of PROFILE(COMP(2 weeks)) from ETH prints, between HVN_near and HVN_far | Same |
+| SETUP | Price in or at HVN_near, trading into the adjacent LVN zone | Same |
+| TRIGGER | M1 close at least 1 tick inside the LVN zone in d, with range ≥ 1.5 × median M1 range (20 bars) and volume ≥ 1.5 × median M1 volume (20 bars) | VB-B close at least 1 tick inside the zone in d, with range ≥ 1.5 × median range and duration ≤ 0.5 × median duration of the last 20 non-partial VB-B bars |
+| MANAGEMENT | M1; progress check after 10 bars; 30-minute hard limit | VB-B; progress check after 10 bars; same clock limit |
+
+Stays on clock time in both versions: the composite's session boundaries, the RTH trading window and the 30-minute hard time stop.
+
+**Context filter.** REGIME(D) is not IMB against d. The traverse direction d is set by which side of the LVN price is leaving.
+
+**Location.** PROFILE(COMP(2 weeks)) is built from all ETH prints of the last 10 completed sessions, with 03's role for ETH: "liquidity levels including overnight". It uses σ = round(3·√10) ≈ 9 ticks. An LVN qualifies only with an HVN on both sides. HVN_near is the HVN price is leaving, and HVN_far is the target beyond.
+
+**Setup.** Price trades from HVN_near into the LVN zone.
+
+**Trigger.** A fast, wide TRIGGER-layer bar closes inside the LVN zone in d (thresholds as in the table). In the time version, M1 volume is seasonal at the open, so no trigger is taken in the first 15 RTH minutes.
+
+**Entry order.** Stop-limit 1 tick beyond the trigger bar's extreme in d, with limit offset SLIP(L), valid 2 TRIGGER-layer bars. This is a breakout-style entry, per 07's order table.
+
+**Risk & management**
+
+| Item | Rule |
+|---|---|
+| Initial stop | The LVN/HVN_near boundary − BUF(L) (back in the origin HVN means no traverse), with the ATR floor |
+| Sizing | Common R rule |
+| T1 / T2 | Single target: the near edge of HVN_far, 1 tick in front, 100%. Requires rr ≥ 1.5 |
+| Breakeven / trail / time | Stop to breakeven at +1R. **Speed stop:** if price has not covered 50% of entry→T1 within 10 TRIGGER-layer bars, exit at market. Hard time stop 30 min |
+| Cancel / invalidation | 2 bars without a fill → EXPIRED. Price back inside HVN_near before the fill → CANCELLED |
+
+**Filters.** RTH only, from T0+15 to TC − 30, because overnight books are too thin for stop-limit scalps. Common rules. At most one attempt per LVN per direction per day and three per day.
+
+**Automation spec.**
+- IDLE → ARMED when price sits in or at HVN_near adjacent to a qualifying LVN.
+- ARMED → ORDER_PENDING on the fast-wide trigger.
+- ORDER_PENDING → EXPIRED or CANCELLED.
+- IN_POSITION → MANAGED, with the speed check → CLOSED.
+
+```
+nightly at 17:00 CT:  C = PROFILE(COMP(2 weeks), ETH); N = nodes(C, sigma(C)); lvns = two_sided(N.LVN)
+on TRIGGER-layer close (VB-B | M1), T0+15 <= t <= TC-30:
+  for z in lvns adjacent to price:
+     d = direction from HVN_near(z) into z
+     if REGIME(D) == IMB(-d) or owned_by_other(z): continue
+     fast = (range(bar) >= 1.5*median_range(20)) and ((duration(bar) <= 0.5*median_duration(20)) if VB
+             else (volume(bar) >= 1.5*median_volume(20)))
+     if fast and closed_inside(bar, z, d, ticks=1):
+        stop = floor_stop(z.boundary(HVN_near) -/+ BUF(L), ATR(L)); T1 = HVN_far(z).near_edge -/+ 1 tick
+        if rr(T1) >= 1.5: send stop_limit(extreme(bar, d) +/- 1 tick, limit_off=SLIP(L), expire=2 bars) with bracket(stop, [T1])
+in position, each TRIGGER-layer close: if bars_since_fill >= 10 and progress < 0.5: exit_market("speed")
+```
+
+| Parameter | Default | Reason |
+|---|---|---|
+| Profile | COMP(2 weeks), ETH | Higher-dimension liquidity map; 10 sessions is recent enough for decay concerns |
+| LVN | Two-sided only | A traverse needs a destination HVN |
+| Speed test (VB) | Range ≥ 1.5× and duration ≤ 0.5× of 20-bar medians | Impact plus urgency, as the volume-bar construction defines them |
+| Speed test (M1) | Range and volume ≥ 1.5× of 20-bar medians | The time-bar proxy, which is weaker because clock volume is seasonal |
+| Entry | Stop-limit beyond the trigger bar | Bounded slippage on breakouts per 07 |
+| Speed stop | 50% of the distance within 10 bars | The thesis is a fast traverse; a slow one has failed |
+| Hard time stop | 30 min | Osler's cascades are an hours-scale effect; a scalp should be done well inside that |
+| Max attempts | 1 per LVN per direction, 3 per day | Repeated attempts at one LVN are a rejection signal |
+
+**Visual review checklist.**
+1. Show the engine-rendered COMP(2 weeks) ETH profile, smoothed, with HVN and LVN zones. Confirm the LVN has an HVN above and below.
+2. At the trigger bar, read its logged range and duration against the 20-bar medians.
+3. Check the stop-limit placement, the stop at the HVN boundary and the target at the far HVN's near edge.
+4. Check whether the speed stop fired as logged.
+
+Bot errors to look for:
+- An LVN taken from the raw histogram.
+- A one-sided tail used as a traverse zone.
+- Medians computed with partial bars or across the session break.
+- Time-version triggers in the first RTH minutes.
+- A roll-week composite not shifted by the roll spread.
+
+**Failure modes & regime fit.** It suits directional sessions and the transition out of a balance. It fails when the traverse stalls at a micro-HVN inside the LVN, when the LVN acts as rejection instead (VP-07's scenario), on news spikes (blackout) and on rotational days, where a composite LVN inside a broad balance is just a quiet price.
+
+**Relations.** It conflicts with VP-07 and VP-08 at the same LVN, because rejection and traverse are opposite readings. An LVN has one owner at a time: the first proposal to arm it. It complements VP-13, whose breakouts often cross a composite LVN, and the two then count as one risk unit. It opposes VP-12 at a balance edge.
+
+## VP-10 Unfinished-auction magnet run (nPOC and poor extremes)
+
+**At a glance**
+
+| Style | Typical hold | Instruments | Regime | Evidence | Automation |
+|---|---|---|---|---|---|
+| Intraday | 30 min – to the close | ES/MES, NQ/MNQ, CL/MCL | Initiative activity toward an unfinished reference | C | Med (nPOC and poor-extreme trackers) |
+
+**Concept basis.** Two kinds of unfinished reference serve as targets:
+
+- **Naked POC (nPOC):** a prior profile's POC that has not been traded through since that profile closed. Sierra implements it as "Extend Point of Control … Until Future Intersection" ([Sierra Chart Volume by Price](https://www.sierrachart.com/index.php?page=doc/StudiesReference.php&ID=141)).
+- **Poor high or low:** a session extreme shared by two or more TPO periods with no single-print tail. It reads as an unfinished auction that "tends to be revisited" ([therighttrader, Poor highs and lows](https://therighttrader.com/learn/volume-and-order-flow/poor-highs-and-lows); [Sierra Chart TPO docs](https://www.sierrachart.com/index.php?page=doc/StudiesReference/TimePriceOpportunityCharts.html)). Trader Dale makes the same point ([Trader Dale, Feb 2026](https://trader-dale.blogspot.com/2026/02/order-flow-failed-auction-unfinished.html)).
+
+Two cautions shape the rules. A matching double top is not a poor high, because TPO counts matter ([therighttrader](https://therighttrader.com/learn/volume-and-order-flow/poor-highs-and-lows)). Context changes the trip: "a poor high far above value is a different trip than a poor high sitting on the value-area high of a balanced day" ([NexusFi](https://nexusfi.com/a/market-structure/single-prints-poor-highs-poor-lows-market-profile)). The only claim of validation for nPOC retests is unvetted and shows no method ([portfoliowebsite summary](https://portfoliowebsite-3hz.pages.dev/research/futures-ta/companions/research-summary.html)).
+
+Both kinds are used as **targets, never entries** ([03](03%20Volume%20profile%20across%20timeframes.md)). They share one template, so they are one proposal. The target type is logged, for diagnosis only. Osler's take-profit clustering argues for exiting just in front ([Osler 2003](https://ideas.repec.org/a/bla/jfinan/v58y2003i5p1791-1819.html)), and Chung & Bellotti's decay argues for age caps ([Chung & Bellotti 2021](https://arxiv.org/abs/2101.07410v1)). Grade C.
+
+**Chart stack**
+
+| Role | Time-bar version | Volume-bar version |
+|---|---|---|
+| CONTEXT | REGIME(D) not against d; a qualifying target exists | Same (clock) |
+| LOCATION | Entry reference R ∈ {PROFILE(RTH)[-1].VAH/VAL, IBH/IBL}; target from the nPOC and poor-extreme trackers | Same |
+| SETUP | accepted_beyond(R, d) at an RTH M30 close | Same (clock) |
+| TRIGGER | After acceptance, a bar trades within 2 ticks of R, then an M5 close at least 1 tick beyond R in d | Same with VB-B |
+| MANAGEMENT | M5; flat by TC − 5 | VB-B; same |
+
+Stays on clock time in both versions: T0, the IB, the M30 acceptance periods, the profile periods behind every nPOC and poor extreme, and the flat-by time.
+
+**Context filter.** REGIME(D) is not IMB against d. A target exists beyond R in d:
+- an nPOC from RTH (at most 10 sessions old), WEEK (at most 8 weeks) or MONTH (at most 6 months); or
+- an unrepaired poor high/low of PROFILE(RTH)[-1] or [-2], meaning at least two M30 periods within 1 tick of the extreme and no trade beyond it since.
+
+The target must lie within 1.0 × ATR(D1) of the entry.
+
+**Location.** R is whichever of PROFILE(RTH)[-1].VAH/VAL (or IBH/IBL after T0+60) price has just been accepted beyond, toward the target.
+
+**Setup.** `accepted_beyond(R, d)` turns true at an M30 close.
+
+**Trigger.** Within the next 2 M30 periods, a TRIGGER-layer bar trades at or within 2 ticks of R (a retest), followed by a TRIGGER-layer close at least 1 tick beyond R in d.
+
+**Entry order.** Limit at the trigger close, valid 2 TRIGGER-layer bars.
+
+**Risk & management**
+
+| Item | Rule |
+|---|---|
+| Initial stop | R − BUF(M30) for d = UP, with the ATR floor. Price back inside value means the initiative failed |
+| Sizing | Common R rule |
+| T1 / T2 | Single target: the nearest qualifying target, 1 tick in front, 100%. Requires rr ≥ 1.5 |
+| Breakeven / trail / time | Stop to breakeven at +1R. Flat by TC − 5 |
+| Cancel / invalidation | Target touched before entry → CANCELLED (magnet satisfied). An M30 close back beyond R against d → INVALIDATED. No retest within 2 M30 periods → EXPIRED (no chasing) |
+
+**Filters.** RTH only, T0+60 to TC − 90, because acceptance needs at least two M30 closes. Common rules. One attempt per day.
+
+**Automation spec.**
+- IDLE → ARMED when `accepted_beyond` turns true and a target qualifies.
+- ARMED → ORDER_PENDING on the retest trigger.
+- ARMED → EXPIRED, CANCELLED or INVALIDATED.
+- IN_POSITION → MANAGED → CLOSED.
+
+```
+trackers: naked = {RTH, WEEK, MONTH POCs not yet printed at by any later trade, ETH included}
+          poor  = {extremes of RTH[-1], RTH[-2] with >= 2 M30 periods within 1 tick and no later trade beyond}
+on M30 close (T0+60 <= t <= TC-90):
+  for R in candidates(P.VAH, P.VAL, IBH, IBL):
+     d = side price is on relative to R
+     if not accepted_beyond(R, d) or REGIME(D) == IMB(-d): continue
+     tgt = nearest(naked(age caps) + poor, beyond R in d, dist <= ATR(D1))
+     if tgt: state = ARMED(level_id = hash(tgt.kind, tgt.profile, tgt.price), R = R, deadline = t + 2*M30)
+on TRIGGER-layer close (M5 | VB-B) while ARMED:
+  if touched(tgt): CANCELLED("magnet satisfied")
+  if retest_seen(R, within=2 ticks) and closed_beyond(R, d, ticks=1):
+      stop = floor_stop(R -/+ BUF(M30), ATR(L))
+      if rr(tgt.price) >= 1.5: send limit(bar.c, expire=2 bars) with bracket(stop, [tgt.price -/+ 1 tick])
+on M30 close: if closed_beyond(R, -d): INVALIDATED
+```
+
+| Parameter | Default | Reason |
+|---|---|---|
+| nPOC touch rule | Any later trade at the POC, ETH included | 03's conservative default; fewer levels survive |
+| Age caps | 10 RTH sessions, 8 weeks, 6 months | Decay of level strength; prefer young references |
+| Poor extreme | At least 2 M30 periods within 1 tick | Sierra's definition with 07's 1-tick setting |
+| Entry reference | Prior VA edge or IB extreme just accepted beyond | Initiative activity made objective with 03's acceptance metric |
+| Retest tolerance | 2 ticks | Entry near the reference, not mid-air |
+| Reach | ≤ 1.0 × ATR(D1) | The magnet must be reachable within the session |
+| rr | ≥ 1.5 | A single-target trade with an untested hit rate needs payoff |
+| Max attempts | 1 per day | One initiative leg per day |
+
+**Visual review checklist.**
+1. Overlay the nPOC lines (Sierra "Extend POC Until Future Intersection", Chart Bars method, on a 24-hour chart) with the engine's list and ages. Confirm the target was untouched at entry time.
+2. For poor extremes, check the TPO chart (30-minute sub-periods). At least two periods must share the extreme within 1 tick, with nothing traded beyond since.
+3. Confirm the acceptance at R: two M30 closes beyond plus the logged volume share.
+4. Check the retest, the trigger close, the stop beyond R and the exit 1 tick in front of the target.
+
+Bot errors to look for:
+- An nPOC treated as naked after an ETH touch.
+- A poor high detected with the 0.15 × ATR equal-highs tolerance instead of the TPO rule.
+- A repaired poor extreme still targeted.
+- Ages counted in calendar days.
+- Pre-roll nPOCs not shifted.
+
+**Failure modes & regime fit.** It suits initiative days that leave value toward an old reference. It fails when an HVN between price and the magnet stalls the move, when the magnet is reached only the next day, and on balance days, where acceptance beyond R is brief.
+
+**Relations.** It shares trend days with VP-02, VP-05 and VP-06 (one risk unit). VP-01's T1 or VP-08's TB.POC may be the same price, and one position per instrument prevents doubling. Single-print zones are deliberately not targets here; they belong to VP-11. CX-family proposals may use the same targets for higher-timeframe exits.
+
+## VP-11 Single-print hold or fill
+
+**At a glance**
+
+| Style | Typical hold | Instruments | Regime | Evidence | Automation |
+|---|---|---|---|---|---|
+| Intraday | 30 min – 3 h | ES/MES, NQ/MNQ, CL/MCL | HOLD branch in migration; FILL branch when the zone is accepted | C | High (TPO single-print port) |
+
+**Concept basis.** Sierra defines a single print as "the first TPO within a sub-period that exceeds the high or low of all of the prior TPOs". It is confirmed only if later sub-periods stay beyond, never identified in the first or last sub-period, and retracted if traded back into ([Sierra Chart TPO docs](https://www.sierrachart.com/index.php?page=doc/StudiesReference/TimePriceOpportunityCharts.html)). Unfilled singles persist across sessions as gaps in the auction. Practitioners read them two ways: as support or resistance if the move that created them continues, or as targets to fill if it doesn't. Because the direction is ambiguous, [03](03%20Volume%20profile%20across%20timeframes.md) calls them "levels, not signals".
+
+A double distribution is "two distributions separated by single prints", which Dalton treats as a trend-type day ([therighttrader, Double Distribution Day](https://therighttrader.com/learn/trading-strategies/double-distribution-day)). The only number is tangential: 3 of the 16 complete 80%-rule fills in 2008 came through single prints ([teamlbr, 2008](https://teamlbr.blogspot.com/2008/09/mp-value-area-rule-80-rule.html)).
+
+The proposal resolves the ambiguity with a state machine instead of a forecast. A first touch from the destination side that holds is traded as a HOLD. An M30 period accepted *inside* the zone is traded as a FILL. Only one branch may trade a zone per day. Grade C.
+
+**Chart stack**
+
+| Role | Time-bar version | Volume-bar version |
+|---|---|---|
+| CONTEXT | REGIME(D), checked per branch | Same (clock) |
+| LOCATION | Zone Z = [z_lo, z_hi], the most recent unfilled confirmed RTH single-print zone from RTH[-1..-5] | Same (M30 TPO, clock) |
+| SETUP | HOLD: price enters Z from the destination side but not past z_mid. FILL: price enters Z | Same |
+| TRIGGER | HOLD: CLOSE_BACK(M5, edge, c, 3) out of Z. FILL: an RTH M30 close inside Z | HOLD: CLOSE_BACK(VB-B, …). FILL: same M30 close (clock); entry on the first VB-B close inside Z after it |
+| MANAGEMENT | M5 / M30 | VB-B / M30 |
+
+Stays on clock time in both versions: the M30 TPO sub-periods that define the singles, the FILL acceptance close and T0.
+
+**Context filter.** The creation direction c is UP if the zone formed during an up-move, so it sits below the later distribution.
+- **HOLD**, trading in c: REGIME(D) is IMB or TENT in c.
+- **FILL**, trading in fill direction f toward the far edge: REGIME(D) is not IMB against f.
+
+**Location.** Z must be confirmed in Sierra's "all forward sub-periods" mode and be at least max(4 ticks, 0.25 × ATR(M30)) tall. It shrinks as any later trade, ETH included, prints inside it.
+
+**Setup.** HOLD: price trades at least 1 tick into Z from the destination side (from above for c = UP) without trading past z_mid. FILL: price trades into Z from either side.
+
+**Trigger.** HOLD: a TRIGGER-layer close back out of Z on the destination side within 3 bars. FILL: an RTH M30 period closes inside Z.
+
+**Entry order.** HOLD: limit at the trigger close, valid 2 bars. FILL: limit at the M30 close (time version) or the first VB-B close inside Z (volume version), valid 1 M30 period.
+
+**Risk & management**
+
+| Item | Rule |
+|---|---|
+| Initial stop | HOLD: z_mid − BUF(M5) for c = UP, since a half-filled zone has failed as support. FILL: the entry-side edge ± BUF(M30). Both use the ATR floor |
+| Sizing | Common R rule |
+| T1 / T2 | HOLD: REF_BEYOND(entry, c, rr ≥ 1.0) from {session extreme so far, REFS}, 100%. FILL: the far edge of Z, 1 tick in front, 100% |
+| Breakeven / trail / time | Stop to breakeven at +1R. Time stop: HOLD 2 h, FILL 3 h. Flat by TC − 5 |
+| Cancel / invalidation | HOLD: a trade past z_mid before the trigger → INVALIDATED (the FILL watch continues). FILL: a close back out of Z on the entry side before the fill → INVALIDATED. If HOLD traded and lost, FILL does not arm on that zone that day |
+
+**Filters.** RTH, T0+30 to TC − 60. Common rules. One trade per zone per day, two per day in total.
+
+**Automation spec.**
+- Per zone: IDLE → ARMED(HOLD) when price enters from the destination side, and/or ARMED(FILL) when price enters at all.
+- ARMED(HOLD) → ORDER_PENDING on the close back out, or → INVALIDATED past z_mid.
+- ARMED(FILL) → ORDER_PENDING on an M30 close inside Z.
+- After a HOLD loss, FILL → CANCELLED for the day.
+- IN_POSITION → MANAGED → CLOSED.
+
+```
+nightly: zones = confirmed_unfilled_singles(RTH[-1..-5], mode=ALL_FORWARD); drop height < max(4 ticks, 0.25*ATR(M30))
+on any trade inside z: shrink(z)                                   # ETH prints fill too
+on TRIGGER-layer close (M5 | VB-B), T0+30 <= t <= TC-60, for each z (creation dir c):
+  if entered_from_destination(z, c) and not traded_past(z.mid) and REGIME(D) in {IMB(c), TENT(c)}:
+      if CLOSE_BACK(L, z.dest_edge, c, 3):
+          stop = floor_stop(z.mid -/+ BUF(M5), ATR(L)); T = REF_BEYOND(bar.c, c, rr_min=1.0)
+          send limit(bar.c, expire=2 bars) with bracket(stop, [T])           # HOLD
+on M30 close inside z (and not hold_lost_today(z)):
+  f = direction toward z.far_edge(from entry side); if REGIME(D) == IMB(-f): skip
+  stop = floor_stop(z.entry_edge -/+ BUF(M30), ATR(M30))
+  send limit(bar.c, expire=1 M30) with bracket(stop, [z.far_edge -/+ 1 tick])  # FILL
+```
+
+| Parameter | Default | Reason |
+|---|---|---|
+| Single definition | Sierra, all-forward mode; not in first/last sub-period; retract on re-entry | Ported platform definition; the stricter mode |
+| Zone age | Up to 5 RTH sessions | Decay; most zones are filled sooner |
+| Minimum height | max(4 ticks, 0.25 × ATR(M30)) | Filters trivial singles |
+| HOLD depth limit | z_mid | Past half-fill, the zone is filling, not holding |
+| FILL acceptance | One M30 close inside | The TPO-native sign of acceptance inside the gap |
+| Targets | HOLD: next reference with rr ≥ 1.0; FILL: far edge | Hold resumes the creating move; fill completes the gap |
+| One branch per zone per day | — | Prevents stop-and-reverse whipsaw |
+
+**Visual review checklist.**
+1. On a Sierra TPO chart with 30-minute sub-periods from T0 and single-print highlighting in all-forward mode, confirm the zone and its later shrinkage from subsequent trades.
+2. For HOLD: price entered from the destination side, never passed z_mid, and closed back out within 3 bars.
+3. For FILL: an M30 period closed inside the zone, and the target is the far edge.
+4. Confirm only one branch traded the zone that day.
+
+Bot errors to look for:
+- Singles computed from volume rows instead of TPO periods.
+- Singles flagged in the first or last sub-period.
+- A zone used before the sub-periods that confirm it had closed (look-ahead).
+- Overnight fills not applied.
+- Both branches trading the same zone.
+
+**Failure modes & regime fit.** HOLD suits continuation days after a trend or double-distribution day. FILL suits rotational days. Both fail when zones are mostly filled overnight, when a trend day blows through, and in chop that straddles the zone.
+
+**Relations.** Complements VP-01, whose traverses sometimes complete through singles. When a zone sits at a prior VA edge, VP-03 and VP-11 share one attempt at that level. It shares the "unfinished business" idea with VP-10 but keeps singles out of VP-10's targets.
+
+## VP-12 Composite look-above/below-and-fail
+
+**At a glance**
+
+| Style | Typical hold | Instruments | Regime | Evidence | Automation |
+|---|---|---|---|---|---|
+| Swing (intraday trigger, multi-session hold) | 2 h – 3 sessions | ES/MES, NQ/MNQ, CL/MCL | Balance (multi-day) | C; location B | Med |
+
+**Concept basis.** Look-above-and-fail is the multi-day mirror of the 80% rule. Price auctions above a balance high, fails to win acceptance and returns inside. The target is the balance POC first, then the opposite edge ([03](03%20Volume%20profile%20across%20timeframes.md), Background). Wyckoff's upthrust is the same idea, a push above resistance that closes back inside the range. A spring below the range is only a test until price closes back inside, and a close back beyond invalidates it ([LuxAlgo, Upthrust](https://www.luxalgo.com/library/concept/upthrust/); [LuxAlgo, Spring](https://www.luxalgo.com/library/concept/spring/)).
+
+The mechanism is Osler's. Stop-loss buy orders cluster just above salient levels ([Osler 2003](https://ideas.repec.org/a/bla/jfinan/v58y2003i5p1791-1819.html)). A probe that triggers them without follow-through leaves late buyers trapped above a level the market did not accept. The composite is "anchored at the start of the current balance", as the notes and 03 recommend. Its edges are final profile levels (location B). The setup is untested (C).
+
+**Swing holding.** Until Stage 0 shows that broker-held brackets survive the maintenance halt and the weekend, this proposal runs signal-only or attended ([07](07%20Automation%20architecture.md) §6).
+
+**Chart stack**
+
+| Role | Time-bar version | Volume-bar version |
+|---|---|---|
+| CONTEXT | D1; COMP(balance) of at least 3 sessions; REGIME(W) not IMB in the probe direction | Same (clock) |
+| LOCATION | BH/BL (COMP(balance) profile high/low); targets COMP POC and the opposite VA edge | Same |
+| SETUP | RTH trade at least 1 tick beyond BH (or BL) | Same |
+| TRIGGER | RTH M30 close back inside by at least 1 tick within 4 M30 periods of the first probe trade, while `accepted_beyond` is false | VB-A close back inside within the same 4-period clock window, same non-acceptance test |
+| MANAGEMENT | Broker bracket; soft exit on later acceptance; D1 time stop | Same |
+
+Stays on clock time in both versions: the session boundaries of the composite, the M30 acceptance periods, the 4-period window and the session-count time stop.
+
+**Context filter.** COMP(balance) exists with at least 3 sessions and is frozen at the last RTH close. REGIME(W) is not IMB in the probe's direction: no fading a probe that goes with the weekly migration. Not in roll week.
+
+**Location.** BH for a short (look-above-and-fail), BL for a long (look-below-and-fail).
+
+**Setup.** An RTH trade at least 1 tick beyond BH.
+
+**Trigger.** An M30 close at or below BH − 1 tick within 4 M30 periods of the first probe trade, while `accepted_beyond(BH, UP)` is false (fewer than two M30 closes beyond, or less than 15% of volume since the cross printed beyond). rr(T1) must be at least 1.0.
+
+**Entry order.** Limit at the trigger close, valid 1 M30 period (time) or 2 VB-A bars (volume).
+
+**Risk & management**
+
+| Item | Rule |
+|---|---|
+| Initial stop | Probe extreme + BUF(M30), with the ATR floor |
+| Sizing | Common R rule; micros are expected given multi-session stop widths |
+| T1 / T2 | T1: COMP POC, 1 tick in front, 50%. T2: COMP VAL, 1 tick in front, 50% (mirrored for longs) |
+| Breakeven / trail / time | Stop to breakeven at T1. Soft exit at market if `accepted_beyond(BH, UP)` becomes true at any later RTH M30 close. Time stop at the third RTH close after entry |
+| Cancel / invalidation | 4 M30 periods with neither failure nor acceptance → EXPIRED. Acceptance before the trigger → INVALIDATED, and the edge passes to VP-13's watch |
+
+**Filters.** Probes and triggers in RTH only. No entries in roll week. Common news rules, with positions held through scheduled events only on broker-held stops and only in attended mode. At most one attempt per edge per day and two per balance episode.
+
+**Automation spec.**
+- IDLE → ARMED on the probe.
+- ARMED → ORDER_PENDING on the close back inside without acceptance.
+- ARMED → INVALIDATED on acceptance, or → EXPIRED after 4 M30 periods.
+- IN_POSITION → MANAGED → CLOSED via target, stop, soft exit or time stop.
+
+```
+on RTH close: C = COMP(balance) over completed RTH sessions; if C.sessions < 3: no balance
+on RTH trade >= C.BH + 1 tick (and REGIME(W) != IMB_UP, not roll week): state = ARMED(edge=C.BH, d=DOWN, t_probe=now)
+on TRIGGER-layer close (M30 | VB-A) while ARMED:
+  if accepted_beyond(C.BH, UP): INVALIDATED("accepted -> VP-13 watch")
+  elif now > t_probe + 4*M30: EXPIRED
+  elif bar.c <= C.BH - 1 tick:
+      stop = floor_stop(probe_high + BUF(M30), ATR(L))
+      if rr(C.POC) >= 1.0: send limit(bar.c, expire=1 M30 | 2 VB-A) with bracket(stop, [C.POC + 1 tick (50%), C.VAL + 1 tick (50%)])
+in position, each RTH M30 close: if accepted_beyond(C.BH, UP): exit_market("accepted")
+at 3rd RTH close after fill: exit_market("time")
+```
+
+| Parameter | Default | Reason |
+|---|---|---|
+| Composite | COMP(balance): 3–20 overlapping RTH sessions, frozen at the last RTH close | Anchored at the balance start, per the notes |
+| Edge | Composite profile high/low | A true look above the balance, not rotation inside it |
+| Probe | At least 1 tick beyond | Minimal objective probe |
+| Failure window | 4 M30 periods | Brooks' "within a bar or a few bars" for failed breakouts, at M30 scale |
+| Acceptance test | 03's `accepted_beyond` (2 M30 closes, 15% volume) | One definition of acceptance across the family |
+| Targets | COMP POC, then the opposite VA edge | 03's swing-stack management |
+| Time stop | 3 RTH sessions | A balance fade that hasn't rotated in three sessions has lost its premise |
+
+**Visual review checklist.**
+1. Recreate COMP(balance) on Sierra as a date-range volume profile over the listed sessions, RTH data only. Confirm BH, BL, POC and VA. Confirm each session's value overlapped its predecessor's.
+2. Mark the probe beyond BH and count the M30 closes beyond it: fewer than two, or a volume share under 15%.
+3. Confirm the close back inside within 4 periods, the stop beyond the probe extreme and the targets.
+
+Bot errors to look for:
+- A non-overlapping (HIGHER/LOWER) session included in the run.
+- A composite built from ETH while the chart shows RTH.
+- Today's developing session included.
+- Acceptance computed with ETH volume.
+- BH taken from an ETH high.
+
+**Failure modes & regime fit.** It suits mature, two-sided balances. It fails on the "failed failure", where a failure resumes as a breakout, and on weeks with migration in the probe direction (filtered), event weeks, very young balances and balances near the 20-session cap.
+
+**Relations.** VP-13 is the opposite outcome at the same edge. They are mutually exclusive by the acceptance test and share one attempt budget per edge per day. When a prior-day VA edge coincides with BH, VP-03 and VP-12 share the level. It shares VP-01's "back to value" thesis on a larger scale, so only one of them may act on one excursion. The router blocks it against weekly migration (VP-14's regime).
