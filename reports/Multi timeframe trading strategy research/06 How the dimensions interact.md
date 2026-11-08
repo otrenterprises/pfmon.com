@@ -96,7 +96,7 @@ Layer spacing follows the practitioner convention of roughly 4–6× between adj
 
 | Role | Swing-trade stack (holds hours to days) | Scalp stack (holds seconds to minutes) |
 |---|---|---|
-| CONTEXT | STRUCTURE(D1) as the gate, STRUCTURE(W1) as a veto; WEEK value vs prior WEEK as secondary read | STRUCTURE(VB-A), or STRUCTURE(H1) for a clock-time variant; price relative to prior-RTH POC |
+| CONTEXT | STRUCTURE(D1) as the gate, STRUCTURE(W1) as a veto; WEEK value vs prior WEEK as secondary read | STRUCTURE(VB-A), or STRUCTURE(H1) for a clock-time variant; RTH open location relative to prior-RTH value |
 | LOCATION | PROFILE(WEEK), MONTH, COMP(4) node or naked WEEK POC inside the D1 leg's FIB(A→B) 0.382–0.786 band | Prior-RTH VAH/VAL/POC, ON-profile POC, naked RTH POCs (last 5 sessions), or ANCH POC of the last VB-B leg, inside that leg's 0.5–0.786 band |
 | SETUP | H4 in pullback phase while price is in the zone; D1 depth label not "degraded" | VB-B in pullback phase while price is in the zone |
 | TRIGGER | H1 (or VB-A) sweep below the latest SWING(H1) low, reclaim, then H1 BOS | VB-C sweep below the latest SWING(VB-C) low, reclaim, then VB-C BOS |
@@ -122,7 +122,7 @@ This template is illustrative. It is a long-side design proposal; shorts mirror 
 This is also illustrative, long side, RTH only. The volume bars are sized from the instrument's 20-session ADV, recalibrated weekly, and break at session start. Partial bars are flagged and excluded from swing counting.
 
 1. **Pre-session.** Compute PROFILE(RTH) for the prior session (POC, VAH, VAL) and PROFILE(ON) for the overnight. List naked RTH POCs from the last five sessions and mark ONH/ONL and PDH/PDL. All of these are clock-time objects computed from ticks, never from "the first K volume bars."
-2. **CONTEXT (one condition).** STRUCTURE(VB-A) = UP from confirmed SWING(VB-A) with k = 2.0, and the last trade is above the prior-RTH POC. H1 can stand in for VB-A as a clock-time variant.
+2. **CONTEXT (one condition).** STRUCTURE(VB-A) = UP from confirmed SWING(VB-A) with k = 2.0, and the RTH open printed at or above the prior-RTH VAL. An open below prior value blocks longs for that session. The open-location clause is fixed at the open, so a later pullback into the location cannot violate it. H1 can stand in for VB-A as a clock-time variant.
 3. **Draw the leg.** On VB-B, take the last confirmed impulse leg A→B whose size is at least 3 × ATR(VB-B), so that tiny legs are ignored. Draw FIB(A→B) but shade only the coarse 0.5–0.786 band; on small legs, anchor noise makes individual ratios meaningless.
 4. **LOCATION (one condition).** At least one prior-RTH VAH/VAL/POC, ON POC or naked RTH POC lies inside the band, within 0.25 × ATR(VB-B). The ANCH(A→B) POC is allowed as a pre-declared alternative, but it shares the leg's anchors, so it is weaker evidence. The zone is that node ± 0.25 × ATR(VB-B).
 5. **SETUP.** Price pulls into the zone with STRUCTURE(VB-B) in pullback phase and no close below A.
