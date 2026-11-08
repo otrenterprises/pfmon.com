@@ -10,8 +10,9 @@ The core design decision (a design proposal synthesized from the automation note
 
 ```
  ┌──────────────────── I/O ADAPTERS (the only code with sockets) ─────────────────────┐
- │ Rithmic: TICKER_PLANT  HISTORY_PLANT  ORDER_PLANT  PNL_PLANT                       │
- │ Tradovate (alternative path): md WebSocket, trading WebSocket                      │
+ │ Rithmic (primary): TICKER_PLANT  HISTORY_PLANT  ORDER_PLANT  PNL_PLANT             │
+ │ Tradovate (optional secondary path): md WebSocket, trading WebSocket               │
+ │ External context feeds (optional): e.g. daily/intraday GEX levels (see doc 12)     │
  └───────────────┬─────────────────────────────────────────────────────▲──────────────┘
                  │ normalize → {seq, recv_ts, exch_ts, source, type, payload}   │ broker msgs
                  ▼                                                             │
@@ -23,6 +24,7 @@ The core design decision (a design proposal synthesized from the automation note
    BAR BUILDERS   time: W1 D1 H4 H1 M30 M15 M5 M1   volume: VB-A VB-B VB-C      │
                  ▼  BarClosed (once) / BarUpdated (developing, display only)   │
    FEATURE LAYERS ATR(L) · SWING(L) · STRUCTURE(L) · LEVELS · PROFILE(P) · FIB  │
+                  (+ optional CONTEXT FEED mapper: index levels → ES/NQ prices) │
                  ▼                                                             │
    LEVELS REGISTRY  level_id · price/zone · dimension · provenance · known_at   │
                  ▼                                                             │
@@ -38,6 +40,7 @@ The core design decision (a design proposal synthesized from the automation note
 | Component | Consumes | Emits | Invariant it must never break |
 |---|---|---|---|
 | Adapters | Network frames | Normalized events | Only component with sockets. Drops `isSnapshot=true` trades and quotes so database snapshots are never counted as prints |
+| External context feeds (optional) | Vendor files or APIs (e.g., GEX levels) | `ContextUpdate` events with publish time and `known_at` | Logged like market data; never fetched inside the decision core; a missing feed degrades to "no context", never blocks exits |
 | Event log | Normalized events | Durable sequence-numbered records | Written and flushed before any consumer sees the event |
 | Bar builders | Trades, calendar timer events | `BarClosed` exactly once per bar; `BarUpdated` for the developing bar | Identical code for seeding, live and replay |
 | Feature layers | Closed bars of their own layer | Versioned outputs stamped `known_at` | Never publish a value before its confirmation time |
