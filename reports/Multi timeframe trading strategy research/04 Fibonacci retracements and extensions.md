@@ -221,13 +221,7 @@ Osler's order-clustering work is the plausible mechanism, and it sets limits. Fo
 | Swing extremes (0%/100%) and midpoints as reaction levels | n/a | **B** | Counted as SWING levels in 01, not as Fib |
 | Order clustering at salient levels (mechanism) | n/a | **A** (round numbers, FX) | Rationale for stop buffers and obvious higher-timeframe anchors |
 
-The recommended role follows from this evidence, and it is deliberately modest:
-
-- **A ruler.** Express every pullback's depth as a fraction r of a confirmed qualifying leg. That makes setups comparable across ES, NQ and CL and from W1 down to VB-C, and puts stops beyond r = 0.786 or 1.0 in the same units.
-- **A target ladder.** B, EXT 1.272 and EXT 1.618 space partial exits by a convention computed at entry.
-- **One confluence input.** FIB-CLUSTER can nominate a LOCATION. It counts only when an independent dimension, volume-at-price, agrees with it, and only if it is never double-counted against swing levels from the same anchors.
-
-Fibonacci never sets CONTEXT, because bias comes from G3 STRUCTURE on the highest layer. It never sets TRIGGER either; triggers come from CHoCH and BOS on a lower layer.
+The recommended role follows from this evidence, and it is deliberately modest. Fibonacci is **a ruler**: every pullback's depth is expressed as a fraction r of a confirmed qualifying leg, which makes setups comparable across ES, NQ and CL and from W1 down to VB-C, and puts stops beyond r = 0.786 or 1.0 in the same units. It is **a target ladder**: B, EXT 1.272 and EXT 1.618 space partial exits by a convention computed at entry. And it is **one confluence input**: FIB-CLUSTER can nominate a LOCATION, but it counts only when an independent dimension, volume-at-price, agrees with it, and only if it is never double-counted against swing levels from the same anchors. Fibonacci never sets CONTEXT, because bias comes from G3 STRUCTURE on the highest layer. It never sets TRIGGER either; triggers come from CHoCH and BOS on a lower layer.
 
 To be candid about where Fib earns its place: ATR multiples or plain thirds (which Gartley's original pattern reportedly used) could do the ruler job just as well. Fibonacci's only extra claim is that other people watch it, and that claim is strongest on obvious higher-timeframe legs. Fibonacci on M1 or VB-C legs has no special standing.
 
@@ -339,7 +333,7 @@ The candid caveat from the evidence applies directly. The lower the LOCATION lay
 
 ## Volume bars change when a grid exists, not where its levels sit
 
-Fibonacci arithmetic uses price only. On constant-volume bars it is therefore identical to time bars whenever the same anchors are chosen. Each VB-A, VB-B or VB-C bar contains all the trades of its slice, so its high and low are true traded extremes. The swing notes add that on any non-time bar a swing's extreme should come from tick data, not from a synthetic bar boundary. What changes is which swings get chosen and when they confirm. The directional-change detector was built for event-driven sampling of tick data rather than fixed time intervals ([Tsang DC4TD 2021](https://www.bracil.net/finance/papers/Tsang-DC4TD-JCEBS-2021.pdf)), so it carries over to volume bars unchanged. Bar-count pivots, by contrast, change meaning: "R bars" becomes R units of traded activity, so their lag scales with activity rather than with minutes (see [05 Volume bars versus time bars](05%20Volume%20bars%20versus%20time%20bars.md)). The rest of this table is inference from those properties and from the shared VB definitions.
+Fibonacci arithmetic uses price only. On constant-volume bars it is therefore identical to time bars whenever the same anchors are chosen. Each VB-A, VB-B or VB-C bar contains all the trades of its slice, so its high and low are true traded extremes. The swing research behind 01 adds that on any non-time bar a swing's extreme should come from tick data, not from a synthetic bar boundary. What changes is which swings get chosen and when they confirm. The directional-change detector was built for event-driven sampling of tick data rather than fixed time intervals ([Tsang DC4TD 2021](https://www.bracil.net/finance/papers/Tsang-DC4TD-JCEBS-2021.pdf)), so it carries over to volume bars unchanged. Bar-count pivots, by contrast, change meaning: "R bars" becomes R units of traded activity, so their lag scales with activity rather than with minutes (see [05 Volume bars versus time bars](05%20Volume%20bars%20versus%20time%20bars.md)). The rest of this table is inference from those properties and from the shared VB definitions.
 
 | Aspect | Time bars | VB-A / VB-B / VB-C | Consequence for Fib |
 |---|---|---|---|
