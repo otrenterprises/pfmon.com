@@ -1117,3 +1117,475 @@ It fits balanced, rotational weeks.
 - **FIB-11:** conflicts with it (breakout vs fade around extremes).
 - **FIB-12:** supplies the range-mode target rules.
 
+## FIB-10 Extension-exhaustion fade at an HTF extension cluster
+
+### At a glance
+- **Style:** intraday-to-swing (an intraday instance, H1/M15/M5, would be a separate strategy version). **Typical hold:** 4 hours to 3 sessions.
+- **Instruments:** ES/MES, NQ/MNQ, CL/MCL.
+- **Regime:** an H4 up-leg running into daily resistance while D1 is not in an uptrend. Longs mirror (H4 down-leg into daily support, D1 not DOWN).
+- **Evidence grade:** C. Extension and projection levels as "where legs end" are practitioner guidelines. The measured-move regularity also appears in random walks. Counter-trend fades carry a lower prior.
+- **Automation complexity:** High.
+
+### Concept basis
+Several schools treat extensions and projections as natural end points for legs:
+- Elliott's guideline puts wave 3 near 1.618 × wave 1 ([TheRightTrader](https://therighttrader.com/learn/elliott-wave-and-cycles/elliott-wave-fibonacci-ratios)).
+- Boroden's first objective is the 1.272 extension, and she trails because such targets "are not always met" ([Boroden interview](https://tradingmarkets.com/?p=661586)).
+- DiNapoli's OP/XOP project the thrust from the reaction low ([LuxAlgo DiNapoli](https://www.luxalgo.com/library/concept/dinapoli-levels.md)).
+- Brooks' Leg 1 = Leg 2 is the same idea ([LuxAlgo measured move](https://www.luxalgo.com/library/concept/measured-move/)).
+
+The microstructure story for a stall at such a level is Osler's: take-profit orders cluster at salient prices and act as "partially reflecting barriers" ([Osler SR125](https://www.newyorkfed.org/medialibrary/media/research/staff_reports/sr125.pdf)). The candid counterweights are strong. The directional-change finding that an overshoot averages about the threshold also comes out of a binomial random walk, so measured-move completion is geometry, not prediction ([Glattfelder et al.](https://arxiv.org/pdf/0809.1040)). Trends persist ([Moskowitz, Ooi & Pedersen](https://econpapers.repec.org/RePEc:eee:jfinec:v:104:y:2012:i:2:p:228-250)), and bearish reversal patterns on equities succeed less often than bullish ones ([ThePatternSite](https://www.thepatternsite.com/123tc.html)). The design therefore fades only when D1 is *not* trending with the leg, requires an extension or projection member in a multi-anchor cluster, and waits for an H1 structure break, which is a G2-style reading of the H4 leg's end. See [04](04%20Fibonacci%20retracements%20and%20extensions.md) and [01](01%20Swing%20points%20across%20timeframes.md).
+
+### Chart stack
+| Role | Time-bar version | Volume-bar version |
+|---|---|---|
+| CONTEXT | D1 STRUCTURE ≠ UP; H4 STRUCTURE = UP (the leg being faded) | Same (clock) |
+| LOCATION | FIB-CLUSTER (resistance): H4 extensions + H4 projections + D1 down-leg retracements | Same (clock) |
+| SETUP | Zone touched while the H4 leg is still running | Same |
+| TRIGGER | H1 CHoCH_DOWN | VB-A CHoCH_DOWN |
+| MANAGEMENT | H1 / H4 | VB-A / H4 |
+
+On clock time in both versions: D1, H4, entry exclusions, blackouts, and the 5-session time stop.
+
+### Context filter
+STRUCTURE(D1) ∈ {DOWN, RANGE, TRANSITION} at G3 (not UP), and STRUCTURE(H4) = UP with the current H4 leg beyond the prior H4 swing high.
+
+### Location
+The contributors are:
+- E(1.272) and E(1.618) of the last two confirmed H4 up-impulse legs (beyond their B);
+- projections C + {1.0, 1.618} × |prior H4 up-leg| from the latest confirmed H4 swing low C (AB=CD / XOP);
+- R(0.618) and R(0.786) of the last confirmed D1 down-leg, which is resistance above price in a daily correction or range.
+
+The cluster needs w = 0.2 × ATR(H4), ≥3 members, ≥2 anchor pairs, and ≥1 member that is an extension or projection. The zone must lie above price; selection follows R9. Be aware that E(1.272) of a leg and the projection from its pullback share pivots, so the members are partly dependent (independence accounting).
+
+### Setup
+An H1 bar's high trades at or above zone_lo while the H4 leg is still active, meaning no H4 close above zone_hi + 0.1 × ATR(H4).
+
+### Trigger
+An H1 CHoCH_DOWN (an H1 close below the last confirmed SWING(H1) low) within 12 H1 bars of the touch.
+
+### Entry order
+A sell limit at the broken H1 level − 1 tick, expiring after 3 H1 bars (S11).
+
+### Risk & management
+- **Stop:** the farther of (the highest high since the touch + buffer(H1)) and (zone_hi + 0.1 × ATR(H4)). Skip if the stop is more than 1.5 × ATR(H4) away.
+- **Targets:** FIB-12 reversal mode on the final H4 leg C→X, where X is the high. T1 is the first of R(0.382), R(0.5) or R(0.618) that is ≥1R; T2 is C, the leg's origin. Half exits at each.
+- **After T1:** stop to breakeven; trail above confirmed H1 swing highs.
+- **Time stop:** 5 sessions.
+- **Cancel:** an H4 close above zone_hi + 0.1 × ATR(H4) (accepted above), D1 turning UP at G3, the trigger window lapsing, or a cluster grid being SUPERSEDED.
+
+### Filters
+- ETH entries, excluding 16:45–18:30 ET and the Sunday open.
+- Blackout.
+- Volatility band applied to ATR(H4).
+- One attempt per zone; one open FIB-10 position per instrument.
+
+### Automation spec
+**States:** IDLE → ZONE_ACTIVE → ARMED → ORDER_PENDING → IN_POSITION → MANAGED → CLOSED. Exits: CANCELLED, EXPIRED, INVALIDATED, REJECTED, ERROR.
+
+```
+on bar_close(H4):
+  if STRUCTURE(D1).state == UP or STRUCTURE(H4).state != UP: cancel(); return
+  legs = SWING(H4).legs(UP, 2); C = SWING(H4).last_low; prior = legs[-1]
+  lv = ext(legs, [1.272,1.618]) + [C + r*|prior| for r in (1.0,1.618)] + retr(SWING(D1).legs(DOWN,1), [0.618,0.786])
+  Z  = FIB_CLUSTER(lv, w=0.2*ATR(H4), min_levels=3, min_anchors=2, must_include_type∈{EXT,PROJ}).select(above=price)
+  if close > Z.hi + 0.1*ATR(H4): cancel("accepted_above")
+on bar_close(H1):  # mirror of FIB-06 flow with CHoCH_DOWN, stop above, FIB12.reversal(leg=C→X)
+```
+
+| Parameter | Default | Reason |
+|---|---|---|
+| D1 filter | D1 not UP (G3) | Trend persistence; equity-index asymmetry (design) |
+| Contributors | H4 extensions, H4 projections, D1 down-leg retracements | Boroden, DiNapoli, Elliott vocabularies in shared ratios |
+| Required type | ≥1 extension or projection member | Makes it an "extension" cluster (design) |
+| Tolerance | 0.2 × ATR(H4) | S6 |
+| Trigger | H1 CHoCH_DOWN within 12 H1 bars | G2-style evidence that the leg ended (design) |
+| Max stop | 1.5 × ATR(H4) | Design |
+| Targets | 0.382–0.618 of the final leg, then its origin | Standard fade ladder (FIB-12 reversal) |
+| Time stop | 5 sessions | Design |
+| Inherited | S1–S17 | Shared |
+
+### Visual review checklist
+A valid signal shows:
+- The D1 state (not UP) dated, and the H4 leg labelled.
+- Each extension or projection member traceable to *completed* legs, i.e. confirmed before the touch.
+- The zone above price, the H1 CHoCH_DOWN within 12 bars, and the fill at a retest.
+
+A bot error looks like one of these:
+- An extension computed from the still-running H4 leg (it moves with price, which makes it a self-chasing target).
+- A projection drawn from B instead of C.
+- A cluster built only from retracements.
+- A short taken while D1 was UP.
+
+### Failure modes & regime fit
+- **Overshoots are the norm.** Strong legs routinely travel through extension clusters; extensions are targets that get exceeded. The trigger and the acceptance-above cancel rule are the only protection.
+- **Thin-liquidity and news spikes.** In both, clusters are run before any reversal.
+
+It fits rotational daily markets where H4 legs swing between daily boundaries.
+
+### Relations
+- **FIB-11:** conflicts with it. FIB-11 trades *to* projection levels with the trend while FIB-10 fades them, so do not run both on one instrument.
+- **FIB-06:** conflicts with it (opposite bias on the same stack).
+- **PA family:** its 2B at an HTF swing high overlaps whenever the cluster coincides with a prior D1 high, and the PA version should win then (it is simpler).
+- **FIB-12 reversal mode:** used here.
+- **Long hosts elsewhere:** when a long's T2 coincides with a FIB-10 zone, that is consistent with this proposal, not a confirmation of the long.
+
+## FIB-11 Projection breakout (OP/XOP targets)
+
+### At a glance
+- **Style:** intraday (a swing instance, D1/H4/H1, would be a separate strategy version). **Typical hold:** 30 minutes to 4 hours.
+- **Instruments:** ES/MES, NQ/MNQ, CL/MCL.
+- **Regime:** a strong H1 trend after a shallow M15 pullback. Shorts mirror.
+- **Evidence grade:** C. The breakout-continuation mechanism (stop cascades beyond salient levels) is B (indirect). The projection targets are C.
+- **Automation complexity:** Med.
+
+### Concept basis
+This is the family's only momentum entry. Osler shows that stop-loss buy orders cluster just *above* salient prices and that rates "trend strongly after crossing" them, with effects lasting hours ([Osler SR125](https://www.newyorkfed.org/medialibrary/media/research/staff_reports/sr125.pdf); [Osler SR150](https://www.newyorkfed.org/medialibrary/media/research/staff_reports/sr150.pdf)). The prior swing high B of a healthy impulse is a candidate for such a cluster. That carry-over from round numbers to swing highs is an inference.
+
+Fibonacci supplies two things. The first is the **qualification**: the pullback C must be shallow (≤0.5), the "strong momentum" end of the depth scale ([LuxAlgo Fib retracement](https://www.luxalgo.com/library/concept/fib-retracement/)). The second is the **targets**: DiNapoli's OP = C + 1.0 × (B−A) and XOP = C + 1.618 × (B−A) ([LuxAlgo DiNapoli](https://www.luxalgo.com/library/concept/dinapoli-levels.md); [CQG DNExp](https://help.cqg.com/cqgic/25/Documents/expansiondnexp.htm)), which match Brooks' measured move ([LuxAlgo measured move](https://www.luxalgo.com/library/concept/measured-move/)). The main failure is the failed breakout. Brooks-style practitioners note that one "reverses within a bar or a few bars," which the acceptance exit encodes ([Brooks forum](https://www.brookstradingcourse.com/support-forum/15-breakouts/failed-breakout/)). Projections are reference distances, not forecasts ([Glattfelder et al.](https://arxiv.org/pdf/0809.1040)). See [04](04%20Fibonacci%20retracements%20and%20extensions.md).
+
+### Chart stack
+| Role | Time-bar version | Volume-bar version |
+|---|---|---|
+| CONTEXT | H1 STRUCTURE = UP | H1 STRUCTURE (clock) |
+| LOCATION | M15 A→B impulse grid; pullback C (SWING(M5)-confirmed), depth ≤0.5 | VB-A grid; C confirmed by SWING(VB-B) |
+| SETUP | C confirmed, price below B | Same on VB-A |
+| TRIGGER | Resting stop-limit at B + 1 tick | Same |
+| MANAGEMENT | M15 acceptance exit and trail | VB-A (acceptance window 3 VB-A bars and 45 minutes) |
+
+On clock time in both versions: H1, windows, blackout, and the flat-by time.
+
+### Context filter
+STRUCTURE(H1) = UP at G3, with no G2 against it.
+
+### Location
+- A→B is the latest ACTIVE M15 up-impulse (≥3 × ATR(M15)).
+- C is the lowest low since B, confirmed by SWING(M5), with C > A.
+- The depth d = (B−C)/(B−A) must be ≤ 0.5. In FIB-05 terms the pullback is SHALLOW or upper NORMAL, and the depth limit is also what makes OP worth at least about 1R.
+
+### Setup
+C is confirmed, price is below B, and the grid is not locked (for example, FIB-04 has not already traded it).
+
+### Trigger
+A trade at B + 1 tick, through a resting broker stop-limit. An **acceptance check** follows: if any of the next 3 M15 bars closes back below B, exit at market (failed breakout).
+
+### Entry order
+A buy stop-limit with trigger at B + 1 tick and limit at B + 1 tick + 0.1 × ATR(M15), inside a bracket. It expires after 24 M15 bars or at the window's end. It is cancelled on an M5 close below C, when a new confirmed M15 swing high forms below B (the pullback became a range), or when the context is lost. Non-fills from gaps through the limit are logged.
+
+### Risk & management
+- **Stop:** C − buffer(M15).
+- **Targets:** T1 = OP = C + 1.0 × (B−A), T2 = XOP = C + 1.618 × (B−A). Skip unless T1 is ≥1R from the limit price.
+- **After T1:** stop to breakeven; trail under confirmed M15 swing lows.
+- **Exits:** the acceptance exit as above, and flat by session end.
+
+### Filters
+- RTH windows; blackout (breakouts on releases are excluded).
+- Volatility band applied to ATR(M15).
+- One attempt per grid; 3 trades per day.
+
+### Automation spec
+**States:** IDLE → ZONE_ACTIVE (A→B ACTIVE) → ARMED (C confirmed, depth OK, stop-limit working = ORDER_PENDING) → IN_POSITION → ACCEPTANCE_CHECK (3 M15 bars) → MANAGED → CLOSED. Exits: CANCELLED, EXPIRED, REJECTED, ERROR.
+
+```
+on SWING(M5).new_confirmed_low C:
+  leg = SWING(M15).last_impulse(UP); g = FIB(leg.A→leg.B)
+  d = (leg.B - C.price)/|leg|
+  if STRUCTURE(H1).state==UP and g.status==ACTIVE and C.price>leg.A and d<=0.5 and not LOCKED(g):
+     stop = C.price - buffer(M15); lim = leg.B + tick + 0.1*ATR(M15)
+     T = [C.price + 1.0*|leg|, C.price + 1.618*|leg|]
+     if (T[0]-lim) >= 1.0*(lim-stop): ORDER.bracket_stoplimit(trigger=leg.B+tick, limit=lim, stop, T, expiry=24 M15 bars)
+on fill: LOCK(g); state=ACCEPTANCE_CHECK; n=0
+on bar_close(M15) in ACCEPTANCE_CHECK: n+=1; if close < leg.B: ORDER.exit_market("failed_breakout") elif n>=3: state=IN_POSITION
+on bar_close(M5): if close < C.price and state==ORDER_PENDING: cancel("C_broken")
+```
+
+| Parameter | Default | Reason |
+|---|---|---|
+| Depth limit | d ≤ 0.5 | Shallow means strong; keeps OP ≥ ~1R (design) |
+| Entry | Stop-limit at B + 1 tick, limit + 0.1 × ATR(M15) | 07: stop-limit bounds slippage at breakouts |
+| Acceptance exit | Any M15 close below B within 3 bars | Brooks: failed breakouts reverse within a few bars (design window) |
+| Stop | C − buffer | C becomes the protected low after the BOS |
+| Targets | OP, XOP from C | DiNapoli objective points |
+| Order expiry | 24 M15 bars | Design |
+| Inherited | S1–S17 | Shared |
+
+### Visual review checklist
+A valid signal shows:
+- A, B and C with confirm markers, and C's M5 confirmation earlier than the order.
+- The depth printed (≤0.5), the stop-limit placed only after C confirmed, and OP/XOP drawn from C.
+- The acceptance window shaded.
+
+A bot error looks like one of these:
+- C taken from a provisional low.
+- An order placed while C was still forming.
+- OP drawn from B.
+- A fill counted at a price the limit did not allow.
+- The acceptance exit evaluated on M5 instead of M15.
+
+### Failure modes & regime fit
+- **False breakouts (2B).** These are the dominant failure. Osler's mechanism cuts both ways, and which side wins is regime-dependent. The acceptance exit caps the cost, but frequent small losses are expected in ranges.
+- **Slippage.** Breakout-fill slippage must be measured against the budget (07).
+
+It fits trend days and post-consolidation expansions.
+
+### Relations
+- **FIB-04:** shares grids with it. Whichever fills first locks the grid; the two are complementary sequences (F38 limit, or break of B if the limit was missed).
+- **FIB-10 and FIB-09:** conflict with it.
+- **PA family:** its breakout-pullback (Template C) enters on the pullback *after* the BOS. FIB-11 enters on the BOS, so do not run both on one instrument.
+
+## FIB-12 Target ladder and management overlay
+
+### At a glance
+- **Style:** module (management overlay for any family). **Typical hold:** the host's.
+- **Instruments:** all.
+- **Regime:** all.
+- **Evidence grade:** C for the specific ratio values; B for the placement rule (targets in front of salient prices, following Osler's take-profit clustering).
+- **Automation complexity:** Low.
+
+### Concept basis
+The practitioner sources agree on the ladder's shape:
+- Boroden's first objective is the 1.272 extension, then she trails, because extension targets are not always met ([Boroden interview](https://tradingmarkets.com/?p=661586)).
+- DiNapoli's COP/OP/XOP are staged take-profits ([ForTraders](https://fortraders.org/en/indicators/two-types-fibonacci-extensions.html)).
+- OTE practice targets "the swing itself first, then extension levels beyond it" ([LuxAlgo OTE](https://www.luxalgo.com/library/concept/optimal-trade-entry/)).
+
+The robust common core is: prior extreme, then 1.272, then 1.618 or the 1.0 projection ([04](04%20Fibonacci%20retracements%20and%20extensions.md)). The placement rule comes from Osler. Take-profit orders cluster *at* round numbers more tightly than stops do, and the strongest clustering is at 00 and 50, with nothing special at 25/75 ([Osler SR125](https://www.newyorkfed.org/medialibrary/media/research/staff_reports/sr125.pdf)). A target placed one tick in front of a level or a round number gets filled before that reflecting cluster. The futures analogue of round numbers, 50-point handles for ES/NQ and whole dollars for CL, is an untested inference. The ladder is a management standard, not a forecast. Its levels share anchors with the entry grid and never count as confirmation of the entry.
+
+### Chart stack
+| Role | Time-bar version | Volume-bar version |
+|---|---|---|
+| CONTEXT / SETUP / TRIGGER | n/a (host) | n/a |
+| LOCATION | The host's entry grid (A, B, C or S, X), on the host's anchor layer | Same on VB layers |
+| MANAGEMENT | Ladder targets, breakeven, trail on the host's management layer | Same |
+
+On clock time: the host's time stop only.
+
+### Context filter
+None. The host passes its grid.
+
+### Location
+Ladder rungs by mode:
+- **CONTINUATION** (entry with leg A→B after pullback C): B (0%) → E(1.272) = A + 1.272 × (B−A) → the nearer of {P(C, 1.0) = C + 1.0 × |B−A|, E(1.618)} that lies beyond E(1.272) by ≥ 0.25 × ATR(L).
+- **REVERSAL** (entry against the final leg S→X): R(0.382) → R(0.5) → R(0.618) → R(1.0) = S, all measured back from X.
+- **RANGE** (time-anchored ranges): EQ (0.5) → the opposite extreme.
+
+### Setup
+T1 is the first rung ≥1.0R from entry. T2 is the next rung (in reversal mode, T2 = S). If no rung is ≥1R, the host must skip the trade (S12).
+
+### Trigger
+None.
+
+### Entry order
+None. FIB-12 only shapes the host's bracket.
+
+### Risk & management
+- **Split:** 50/50 at T1 and T2. A quantity of 1 uses T1 only.
+- **Placement:** each target goes 1 tick in front of its rung. If a round number (ES/NQ: multiple of 50 index points; CL: whole dollar) lies between entry and the target within 0.1 × ATR(L), the target moves to 1 tick in front of the round number.
+- **Breakeven:** after T1 fills, the stop moves to entry ± 1 tick.
+- **Trail:** after T1, the stop tightens only. It sits beyond each newly confirmed SWING on the host's management layer, updated at bar close with ≥2-tick hysteresis.
+- **Static:** targets are fixed at fill and never re-anchored, except where a host documents an exception (FIB-04's C*).
+
+### Filters
+None of its own.
+
+### Automation spec
+**States (per position):** LADDER_SET (at fill) → T1_DONE (breakeven applied) → TRAILING → CLOSED.
+
+```
+def FIB12(mode, grid, entry, stop, L):
+  R = |entry - stop|
+  rungs = { CONT:  [grid.B, grid.A + 1.272*(grid.B-grid.A),
+                    nearer_beyond([grid.C + 1.0*|grid.B-grid.A|, grid.A + 1.618*(grid.B-grid.A)], min_gap=0.25*ATR(L))],
+            REV:   [grid.X - r*(grid.X-grid.S) for r in (0.382,0.5,0.618)] + [grid.S],
+            RANGE: [grid.EQ, grid.opposite_extreme] }[mode]
+  rungs = [front_run(r, tick, round_numbers, 0.1*ATR(L)) for r in rungs]
+  i = first(k for k,r in enumerate(rungs) if |r-entry| >= 1.0*R)
+  if i is None: return SKIP
+  T1 = rungs[i]; T2 = grid.S if mode==REV else (rungs[i+1] if i+1 < len(rungs) else None)
+  return Ladder(T1, T2, split=(0.5,0.5), be_after_T1=True, trail_layer=L.management)
+```
+
+| Parameter | Default | Reason |
+|---|---|---|
+| Continuation rungs | B, E(1.272), nearer of P(1.0)/E(1.618) | Common core of Boroden, DiNapoli and OTE target practice |
+| Reversal rungs | 0.382 / 0.5 / 0.618 / 1.0 of the final leg | Shared ratio set applied to fades (design) |
+| Range rungs | EQ, opposite extreme | 0/50/100 (Shanaev & Gibson) |
+| T1 rule | First rung ≥1.0R | S12, a deterministic choice (design) |
+| Split | 50/50 | Simple and auditable (design) |
+| Front-running | 1 tick before the rung or round number | Osler take-profit clustering |
+| Round-number set | ES/NQ multiples of 50; CL whole dollars | Osler's 00/50 analogue (untested inference) |
+| Trail | Host management-layer swings, tighten only | Boroden: breakeven ASAP, then trail |
+
+### Visual review checklist
+A valid run shows the rungs drawn from the *same* `grid_id` as the entry, T1 marked as the first rung ≥1R, targets front-run by one tick, and breakeven applied at the T1 fill.
+
+A bot error looks like one of these:
+- Rungs computed from a different leg than the entry grid.
+- Targets that moved after the fill.
+- A projection anchored at B instead of C.
+- A target set *beyond* a round number by a tick, which is the wrong side of the reflecting cluster.
+
+### Failure modes & regime fit
+Ladder rungs are geometry, and in strong trends E(1.272) is exceeded routinely, which is why there is a trail. In ranges, T2 is rarely reached. The forward test should judge the ladder on MFE distributions, i.e. how often price reached each rung before the stop ([07](07%20Automation%20architecture.md)), and should not tune the rungs mid-sample.
+
+### Relations
+FIB-12 is used by FIB-01, 02, 06, 07, 08, 09, 10 and 13. FIB-03, FIB-04 and FIB-11 pre-commit their own targets. It can be exported to the PA, VP and CX families, which pass in their entry leg. If a host already has its own target rules, do not switch it to FIB-12 mid-sample.
+
+## FIB-13 Volume-clock pullback scalp
+
+### At a glance
+- **Style:** scalp. **Typical hold:** 2–30 minutes.
+- **Instruments:** ES/MES, NQ/MNQ (RTH entries), CL/MCL (09:15–14:00 ET).
+- **Regime:** intraday trend whose pullbacks decelerate (narrower bars per equal volume) relative to the impulse.
+- **Evidence grade:** C. Volume-bar sampling has partial statistical support. The coarse Fib band is a convention, and the deceleration test is an untested inference.
+- **Automation complexity:** Med (it needs a deterministic volume-bar builder that matches the charting platform).
+
+### Concept basis
+Sampling ES every 1/50 of average daily volume removes most intraday seasonality and partially restores normality ([Easley, López de Prado & O'Hara](https://c.mql5.com/forextsd/forum/173/the_volume_clock_-_insights_into_the_high_frequency_paradigm.pdf)). Bar-pattern analysis remains meaningful on constant-volume charts, unlike range charts ([Galen Woods](https://www.tradingsetupsreview.com/trading-charts-without-time-range-tick-volume/)), and Brooks' course staff say price action carries over while warning that fast charts give more false signals around breakouts ([Brooks forum](https://www.brookstradingcourse.com/support-forum/general-trading-discussion/tick-chart/)). Equal volume per bar makes **bar range an impact-per-volume measure**: wide bars mean aggressive one-sided flow, narrow bars mean absorption. That reading is an inference from construction ([05](05%20Volume%20bars%20versus%20time%20bars.md)), and it gives this proposal a setup test that has no clean time-bar equivalent. The concept notes say Fib on small intraday legs is weak and should be "at most a coarse depth band," so the location is the 0.5–0.786 half of the leg rather than any single ratio ([06](06%20How%20the%20dimensions%20interact.md)). Stop-cascade effects play out over hours ([Osler SR150](https://www.newyorkfed.org/medialibrary/media/research/staff_reports/sr150.pdf)), so scalps that do not work quickly are cut. Mandelbrot's caveat (volume time cannot be converted to clock time in advance) is why every expiry also has a clock guard. Nothing here uses volume-at-price, so there is no overlap with the VP family.
+
+### Chart stack
+| Role | Volume-bar version (primary) | Time-bar version |
+|---|---|---|
+| CONTEXT | VB-A STRUCTURE = UP | M15 STRUCTURE = UP |
+| LOCATION | Coarse band R(0.786)–R(0.5) of the latest VB-B BOS leg | Same on M5 |
+| SETUP | Pullback deceleration: median VB-B bar range since B ≤ 0.75 × median bar range in A→B | Same, using M5 range ÷ bar volume (impact per contract) |
+| TRIGGER | VB-C CHoCH_UP | M1 CHoCH_UP |
+| MANAGEMENT | VB-C / VB-B | M1 / M5 |
+
+On clock time in both versions: entry windows, blackout and the post-release cooldown, flat-by time, the trigger window (10 minutes), the order expiry (3 minutes), the maximum VB-C bar duration (5 minutes), and the 30-minute time-stop backstop.
+
+### Context filter
+STRUCTURE(VB-A) = UP at G3, judged on VB-A closes.
+
+### Location
+A→B is the latest VB-B up-leg that produced a VB-B BOS_UP, with |B−A| ≥ 3 × ATR(VB-B). B is end-confirmed by SWING(VB-C) (R2), and B's price is the true traded high from ticks (R3). The band is [R(0.786) − 0.1 × ATR(VB-B), R(0.5) + 0.1 × ATR(VB-B)].
+
+### Setup
+At the first band entry, the median range of the VB-B bars printed since B must be ≤ 0.75 × the median range of the VB-B bars inside A→B. Bar durations are logged for diagnosis but gate nothing. Partial session bars are excluded.
+
+### Trigger
+A VB-C CHoCH_UP within 20 VB-C bars *and* 10 minutes of the band entry. It must come before any VB-B close below R(0.786) − 0.1 × ATR(VB-B), which makes the grid BROKEN and cancels the setup.
+
+### Entry order
+A buy limit at the broken VB-C level + 1 tick, expiring after 5 VB-C bars or 3 minutes. It is cancelled if any VB-C bar in the window lasted more than 5 minutes (a quiet-market guard).
+
+### Risk & management
+- **Stop:** the lowest low since band entry − max(2 ticks, 0.1 × ATR(VB-B)). The buffer is scaled to VB-B because ATR(VB-C) is often below 2 ticks.
+- **Targets:** FIB-12 continuation on A→B. T1 is the first rung ≥1R among {B, E(1.272)}; T2 is the next rung.
+- **After T1:** stop to breakeven; trail under confirmed VB-C swing lows.
+- **Time stop:** 40 VB-C bars or 30 minutes, whichever comes first, and flat by session end.
+- **Cancel:** BROKEN, VB-A context lost, the windows lapsing, or the quiet-market guard.
+
+### Filters
+- RTH entry windows; volume bars still run on ETH so overnight structure is visible.
+- Blackout, plus a cooldown: no entries until 30 minutes *and* 20 VB-C bars after a release, because releases compress many bars into seconds.
+- Volatility band applied to ATR(VB-B).
+- One attempt per leg; 3 trades per day.
+
+### Automation spec
+**States:** IDLE → ZONE_ACTIVE (BOS leg, grid ACTIVE) → ARMED (band entered and deceleration passed) → ORDER_PENDING → IN_POSITION → MANAGED → CLOSED. Exits: CANCELLED, EXPIRED, INVALIDATED, REJECTED, ERROR.
+
+```
+on bar_close(VB-B):
+  leg = SWING(VB-B).last_impulse(UP, made_BOS=True); g = FIB(leg.A→leg.B)
+  if STRUCTURE(VB-A).state==UP and |leg|>=3*ATR(VB-B) and g.status==ACTIVE and state==IDLE: state=ZONE_ACTIVE
+  if state==ZONE_ACTIVE and low <= g.R(0.5)+0.1*ATR(VB-B):
+     if median_range(bars_since(leg.B)) <= 0.75*median_range(bars_in(leg)): state=ARMED; t0=(bar_id, clock); X=low
+     else: state=CANCELLED("no_deceleration")
+  if state==ARMED and close < g.R(0.786)-0.1*ATR(VB-B): cancel("broken")
+on bar_close(VB-C):
+  if state==ARMED:
+     X=min(X,low)
+     if vbc_bars_since(t0)>20 or clock_since(t0)>10min or duration(bar)>5min: cancel("window/quiet")
+     elif STRUCTURE(VB-C).event==CHoCH_UP:
+        lvl=STRUCTURE(VB-C).broken_level; stop=X-max(2*tick, 0.1*ATR(VB-B)); T=FIB12.continuation(leg, lvl+tick, stop)
+        if T.T1_R>=1.0: ORDER.bracket_limit(lvl+tick, stop, T, expiry=min(5 VB-C bars, 3 min)) -> ORDER_PENDING
+```
+
+| Parameter | Default | Reason |
+|---|---|---|
+| Layers | VB-A / VB-B / VB-C | Shared VB ladder (5× and 4×) |
+| Band | 0.5–0.786 (coarse) | "At most a coarse depth band" for small legs |
+| Deceleration ratio | ≤0.75 × the impulse's median bar range | Impact-per-volume reading of equal-volume bars (design) |
+| Trigger window | 20 VB-C bars and 10 minutes | Event window plus clock guard (design) |
+| Quiet-market guard | VB-C bar > 5 minutes cancels | Mandelbrot's caveat (design) |
+| Release cooldown | 30 minutes and 20 VB-C bars | Releases compress bars into seconds (05) (design) |
+| Time stop | 40 VB-C bars / 30 minutes | Cascade effects last hours; scalps are cut early (design) |
+| Inherited | S1–S17 | Shared |
+
+### Visual review checklist
+A valid signal shows:
+- A volume chart built with the *same* bar size, session break and split-print settings as the bot (mismatched settings mean the bot sees different candles; [05](05%20Volume%20bars%20versus%20time%20bars.md)).
+- The VB-B BOS leg with its true tick high, the band, and the deceleration statistic printed at band entry.
+- The VB-C CHoCH within both windows.
+
+A bot error looks like one of these:
+- The VB size recalibrated intraday (it must change only weekly).
+- A partial session bar used as a swing.
+- Deceleration computed including the still-forming bar.
+- B taken from a synthetic bar boundary rather than the traded high.
+- An order surviving a 5-minute VB-C bar.
+
+### Failure modes & regime fit
+- **Fast markets.** VB-C bars become seconds long, and CHoCH triggers come thick and fast. Brooks' staff warn of false signals here, and the cooldown and windows only partly help.
+- **Choppy sessions.** VB-A UP flips constantly.
+- **Costs.** Commissions weigh more on small-R scalps; the Brooks forum notes the same commission drag at lower timeframes.
+
+It fits steady RTH trends with rhythmic pullbacks.
+
+### Relations
+- **FIB-07:** its time-bar cousin on CHoCH legs (a different leg type, so both may run under the grid lock).
+- **FIB-01:** conflicts with it (the same thesis, untriggered; choose one per instrument).
+- **FIB-05:** DEEP-portion entries trade at 0.5× size.
+- **FIB-12:** supplies the ladder.
+- **PA family:** its volume-bar scalps overlap; do not run both on one instrument.
+
+## Forward-validating the family
+
+The validation protocol is the staged one in [07](07%20Automation%20architecture.md). Plumbing comes first (Stage 0), then signal-only with decision records and as-of charts for at least 4–6 weeks or 30–50 signals per proposal, then sim execution, then replay rehearsal of stress days, then one micro live. Rules are frozen per `strategy_version`, and every firing is recorded, including the ugly ones. Visual review is itself a fitting loop ([Bailey et al.](https://scholarworks.wmich.edu/math_pubs/40/)).
+
+The standard-error arithmetic in 07 sets expectations. Detecting a +0.2R expectancy takes roughly 70–150 trades. Thirty trades can only reject a badly broken rule. The swing proposals will therefore need months and identical rules on ES, NQ and CL. MES and ES are one signal, not two.
+
+Four Fib-specific measurements should be logged from day one, because they answer questions the literature cannot:
+- **The "missed: unconfirmed" rate under R2.** If it is very high on a layer, k is too large for that layer's legs. Changing k is a new strategy version.
+- **Cluster frequency per session.** If a qualifying cluster exists almost every time price pulls back, the cluster rule is not selective. That is expected from the introduction's arithmetic, and it is worth knowing.
+- **The empirical depth distribution from FIB-05, per instrument and layer.** This is the user's own version of Forexop's histogram and the most durable output of the whole exercise.
+- **Fill quality.** Track "limit filled, then ≥X ticks adverse" for untriggered limits, and the retest-miss rate for S11 entries.
+
+**The placebo-ratio twin.** For each proposal in Stage 1, also run a signal-only twin with identical code. Its ratio set is replaced by a pre-declared placebo:
+- retracements {0.30, 0.44, 0.70, 0.90};
+- extensions {1.40, 1.85};
+- projections {0.80, 1.30};
+- for FIB-08, the trend-side quarter level of the range (PDL + 0.75 × range for longs, mirrored for shorts). Osler found nothing special about 25/75 levels ([Osler SR125](https://www.newyorkfed.org/medialibrary/media/research/staff_reports/sr125.pdf)), and this level sits farther from EQ_D than even the widest allowed EQ zone (0.2 of the range on the narrowest qualifying day).
+
+Every swing-grid placebo value sits at least 0.05 of the leg from every real ratio, which is more than the zone half-width on any leg that meets the 3-ATR minimum (S4). Zone widths, triggers and everything else stay identical. Hypothetical fills in both versions count only if price traded through the limit by at least a tick. After ≥50 signals each, compare mean R and MFE/MAE. If the Fib version does not beat the placebo by more than about one combined standard error, treat the ratios as a convention. Keep or drop the proposal on its own absolute statistics, and attribute nothing to φ. Never switch to the placebo ratios because they "did better": the placebo is a control, not a candidate. At these sample sizes only large differences are detectable, so a null result is the expected outcome, and it is informative.
+
+**Start with FIB-08, FIB-02 and FIB-06, with FIB-05 and FIB-12 embedded in all three.**
+- **FIB-08** is the best-evidenced (B), lowest-complexity design. It needs no swing-anchored grid at all, only D1 STRUCTURE and an M5 CHoCH, so it doubles as the Stage-0 plumbing test. It fires at most once per instrument per day, and it tests the 0/50/100 finding directly.
+- **FIB-02** exercises the full machinery: R2 end-confirmation, grid versioning, multi-anchor clusters across H1/H4/D1, and the trigger path. It is also the canonical honest design (Fib as cluster locator, structure as trigger) and produces intraday samples quickly.
+- **FIB-06** uses the most widely watched anchors (W1/D1), where the self-fulfilling argument is strongest. It diversifies the forward sample into swing holding. It accrues slowly, so it should start early.
+
+The untriggered limit designs (FIB-01, FIB-04) come in a second wave, alongside FIB-07, FIB-09 and FIB-13, once anchors have been visually validated and the volume-bar builder matches the charting platform. Those two rest entirely on the level, the grade-D component. FIB-03, FIB-10 and FIB-11 come last, because they depend most on pattern detection or carry the lowest prior.
+
+**Do not run these at the same time on the same instrument.**
+
+| Combination | Why not |
+|---|---|
+| FIB-01 / FIB-04 / FIB-13 | The same with-trend continuation thesis on overlapping layers |
+| FIB-02 / FIB-03 | Both are triggered entries at counter-short-term clusters |
+| FIB-06 / FIB-08W | The same daily-pullback-in-weekly-trend thesis |
+| FIB-10 / FIB-11, FIB-10 / FIB-06 | Opposite views of the same extension or projection zone |
+| FIB-09 / FIB-11 | A fade vs a breakout at extremes |
+| FIB-07 with PA-family CHoCH breakouts; FIB-09 with PA-family 2B at PWH/PWL; FIB-01 with PA-family with-trend pullbacks | The same market events, so double exposure |
+| Any FIB proposal with a VP-family entry at the same zone | One thesis counted twice; a CX proposal is the right home |
+
+**These can coexist:**
+- FIB-08 with FIB-09, which are exclusive by D1 regime.
+- FIB-04 with FIB-07, and FIB-07 with FIB-13, which differ by depth or leg type and are protected by the grid lock.
+- FIB-05 and FIB-12 alongside everything.
+
+The family position cap (one open position per instrument) and the 3R family daily loss limit apply throughout.
+
+## Conclusion
+
+Taken together, the research reverses the usual role of Fibonacci. The evidence does not support φ-ratios as levels that hold. What the family *can* offer is something discretionary Fib traders rarely have: a frozen, auditable measurement standard. It covers where the order goes, how deep is "too deep", where the stop sits relative to most normal corrections, and where the targets are. Any edge is borrowed from things with better evidence: higher-layer trend persistence, the reflect-or-cascade behaviour of widely watched levels, and asymmetric risk placement. The one design that leans on a positive empirical finding, the 0/50/100 grid of a time-anchored range, is also the one with the least Fibonacci in it. That is a strong hint that obviousness of the anchor, not the golden ratio, does the work.
+
+Two outcomes of the forward test would change these grades. A placebo-beating result on FIB-02 or FIB-06 after a few hundred signals would be the first futures-specific evidence for multi-anchor clusters. A null result would still leave the user with a disciplined pullback system and a personal depth distribution for ES, NQ and CL. That distribution is more useful than any ratio, because it is the base rate every future level-based claim must beat.
