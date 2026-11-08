@@ -1021,7 +1021,7 @@ Salient levels "reflect" price more often than random levels do. Take-profit ord
 
 Fibonacci contributes two things here. The first is an **overshoot bound**: an overshoot beyond the 1.272 extension of the prior week's range, closed on H1, is treated as acceptance (a breakout) rather than a sweep. Using Boroden's first extension as the cut-off is a design proposal. The second is an **equilibrium target**: the 50% of the range, the level Shanaev & Gibson highlight ([SSRN 4212430](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4212430)).
 
-Fading equity-index strength carries a lower prior. Bulkowski's 1-2-3 statistics are asymmetric (73% bullish vs 43% bearish on stocks) ([ThePatternSite](https://www.thepatternsite.com/123tc.html)), and trends persist ([Moskowitz, Ooi & Pedersen](https://econpapers.repec.org/RePEc:eee:jfinec:v:104:y:2012:i:2:p:228-250)). The weekly filter therefore allows only the counter-weekly-trend side to be skipped. See [04](04%20Fibonacci%20retracements%20and%20extensions.md).
+Fading equity-index strength carries a lower prior. Bulkowski's 1-2-3 statistics are asymmetric (73% bullish vs 43% bearish on stocks) ([ThePatternSite](https://www.thepatternsite.com/123tc.html)), and trends persist ([Moskowitz, Ooi & Pedersen](https://econpapers.repec.org/RePEc:eee:jfinec:v:104:y:2012:i:2:p:228-250)). The weekly side filter therefore skips whichever side would fight the weekly trend. See [04](04%20Fibonacci%20retracements%20and%20extensions.md).
 
 ### Chart stack
 | Role | Time-bar version | Volume-bar version |

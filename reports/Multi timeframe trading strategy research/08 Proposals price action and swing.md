@@ -2,7 +2,7 @@
 
 *File 08 of the multi-timeframe research set: proposals built from swing structure, price-action triggers and clock-time reference levels only (IDs PA-01 to PA-15). Reading order and file map: [00 Index and reading guide](00%20Index%20and%20reading%20guide.md).*
 
-Fifteen genuinely distinct, automatically triggerable strategies can be built from confirmed swing structure, price-action triggers and clock-time levels alone, from scalps on constant-volume bars to month-long positions on weekly candles, without touching volume profile or Fibonacci. Only two of them rest on peer-reviewed evidence for the signal itself: the first-half-hour return predicting the last half-hour (PA-11, **R² about 1.6% in SPY, 1993–2013**) ([Gao et al. 2018](https://econpapers.repec.org/RePEc:eee:jfinec:v:129:y:2018:i:2:p:394-414)) and 1–12-month time-series momentum across **58 futures and forwards** (PA-12) ([Moskowitz, Ooi & Pedersen 2012](https://econpapers.repec.org/RePEc:eee:jfinec:v:104:y:2012:i:2:p:228-250)). Six more, the level-reaction and trend-continuation templates, lean on indirect but credible evidence that prices react more often than chance at widely watched prior highs and lows (**60.8% vs 56.2% bounce rates** in intraday FX) and that stop orders cluster just beyond such levels ([Osler 2000](https://www.newyorkfed.org/medialibrary/media/research/epr/00v06n2/0007osle.pdf); [Osler 2002](https://www.newyorkfed.org/medialibrary/media/research/staff_reports/sr150.pdf)). The other seven are clean, codable versions of practitioner methods with no rigorous support. They are graded C and labelled that way. Volume bars change only the intraday setup and trigger layers. Weekly and daily bars, every reference level, session windows and news blackouts stay on clock time. Every number below is a pre-committed starting value drawn from the research notes or labelled as a design proposal, not an optimized result, and every proposal is a hypothesis to forward-validate in signal-only mode. Start with PA-11, PA-01 and PA-04. Between them they exercise the three engines the whole family needs (clock and session logic, multi-layer swing structure, and the level registry), and they produce signals often enough to judge within weeks.
+Fifteen genuinely distinct, automatically triggerable strategies can be built from confirmed swing structure, price-action triggers and clock-time levels alone, from scalps on constant-volume bars to month-long positions on weekly candles, without touching volume profile or Fibonacci. Only two of them rest on peer-reviewed evidence for the signal itself: the first-half-hour return predicting the last half-hour (PA-11, **R² about 1.6% in SPY, 1993–2013**) ([Gao et al. 2018](https://econpapers.repec.org/RePEc:eee:jfinec:v:129:y:2018:i:2:p:394-414)) and 1–12-month time-series momentum across **58 futures and forwards** (PA-12) ([Moskowitz, Ooi & Pedersen 2012](https://econpapers.repec.org/RePEc:eee:jfinec:v:104:y:2012:i:2:p:228-250)). Six more, the level-reaction and trend-continuation templates, lean on indirect but credible evidence that prices react more often than chance at widely watched prior highs and lows (**60.8% vs 56.2% bounce rates** in intraday FX) and that stop orders cluster just beyond such levels ([Osler 2000](https://www.newyorkfed.org/medialibrary/media/research/epr/00v06n2/0007osle.pdf); [Osler 2002](https://www.newyorkfed.org/medialibrary/media/research/staff_reports/sr150.pdf)). The other seven are clean, codable versions of practitioner methods with no rigorous support. They are graded C and labelled that way. Volume bars change only the intraday setup and trigger layers. Weekly and daily bars, every reference level, session windows and news blackouts stay on clock time. Every number below is a pre-committed starting value drawn from the research notes or labelled as a design proposal, not an optimized result, and every proposal is a hypothesis to forward-validate in signal-only mode. Start with PA-11, PA-01 and PA-04. Between them they exercise the three engines the whole family needs (clock and session logic, multi-layer swing structure, and the level registry). PA-11 and PA-04 also fire often enough to build a forward sample within weeks.
 
 ## Small edges at watched levels are this family's honest foundation
 
@@ -116,7 +116,7 @@ What must remain on clock time: the D1 bars and ATR(D1), the D1 protected low an
 
 **Context filter.** D1 STRUCTURE.state = UP, the most recent D1 event is BOS_UP, and there has been no G3 CHoCH_DOWN since (mirror everything for shorts). If PA-13 has raised a G2 flag against this trend, stand aside.
 
-**Location.** The last H1 close sits inside the D1 pullback: below D1 `last_sh` − 1.0 × ATR(D1) and above D1 `protected_low`. Depth is measured in ATR rather than as a retracement ratio, which keeps this proposal independent of the Fibonacci family.
+**Location.** Since D1 `last_sh` formed, price has traded at least 1.0 × ATR(D1) below it, and no H1 close has fallen below D1 `protected_low`. Depth is measured in ATR rather than as a retracement ratio, which keeps this proposal independent of the Fibonacci family. Once the pullback has reached that depth, the trigger bar itself may close above the zone.
 
 **Setup.** Since D1 `last_sh` formed, H4 has confirmed at least one swing high below it. That H4 lower high shows the wave is under way.
 
@@ -139,7 +139,7 @@ on_close(D1):
     if ctx.state != UP or ctx.event == CHoCH_DOWN: invalidate_all("D1 context lost")
 on_close(H1):
     ctx  = STRUCTURE(D1); top = ctx.last_sh; pl = ctx.protected_low
-    zone = pl.price < H1.close < top.price - 1.0*ATR(D1)
+    zone = low_since(top.pivot_time) <= top.price - 1.0*ATR(D1) and H1.close > pl.price
     wave = any(h.price < top.price for h in SWING(H4).highs_since(top.pivot_time))
     if state == IDLE and ctx.state == UP and zone and wave: state = ARMED; LOG(id, "ARMED", snap())
     if state in {ARMED, ARMED:SUSPENDED}:
@@ -168,7 +168,7 @@ on_close(H4) while MANAGED: trail stop to SWING(H4).last_low.price - BUF(H4) if 
 
 **Visual review checklist.**
 1. On D1, the last confirmed swing high and swing low each sit above their predecessors, and the BOS_UP was a *close* above the prior swing high. Its confirmation marker lies left of the signal.
-2. The trigger bar's close lies inside the shaded zone between D1 `protected_low` and D1 `last_sh` − 1 ATR(D1).
+2. The pullback's low reaches the shaded zone between D1 `protected_low` and D1 `last_sh` − 1 ATR(D1), and no H1 bar has closed below the protected low.
 3. H4 shows a lower-high marker whose confirmation marker precedes the trigger.
 4. The H1 trigger bar closes above a dashed, already-confirmed H1 swing high.
 5. The stop sits below the pullback low by the buffer, not at the low itself.
@@ -276,7 +276,7 @@ Bot error signatures: a level drawn from an unconfirmed H4 pivot (its marker app
 | LOCATION | The H4 swing high just broken | Same | Yes |
 | SETUP | H4 BOS_UP with displacement, then a pullback within 5 H4 bars | H4, unchanged | Yes |
 | TRIGGER | M15: higher low held at the level and CHoCH_UP, or failed failure | VB-A, same rules | No |
-| MANAGEMENT | NEXT_LEVEL and MM for targets; H4 close back below the level = exit | Same | Targets yes |
+| MANAGEMENT | NEXT_LEVEL and MM for targets; H1 swings for the trail; H4 close back below the level = exit | Same (VB-A swings may replace H1 for the trail) | Targets yes |
 
 What must remain on clock time: D1 and H4 bars, the broken level, the 5-H4-bar window and the 3-session time stop. H4 to M15 is 16×, a deliberate gap: the H4 decides that a breakout happened, and the M15 times the retest. **Intraday variant:** H1 BOS with M5 (time) or VB-B (volume) triggers.
 
@@ -678,7 +678,7 @@ Bot error signatures: NR detection on ETH ranges when RTH was configured; an ord
 | TRIGGER | M5 signal bar, stop entry above it (the H2) | VB-B signal bar | No |
 | MANAGEMENT | 1R, then measured move; M5 time stop | Same on VB-B | Session times only |
 
-What must remain on clock time: the RTH window, the blackout and pre-release flatten, and the flat time. VB-A to VB-B is 5×, and M15 to M5 is 3×. **Faster variant:** VB-B context with VB-C setup and trigger (or M5/M1 on time bars). Brooks staff call charts that fast "far too fast", so treat it as experimental.
+What must remain on clock time: the RTH window, the blackout and pre-release flatten, and the flat time. VB-A to VB-B is 5×, and M15 to M5 is 3×. **Faster variant:** VB-B context with VB-C setup and trigger (or M5/M1 on time bars). The course admin calls 2,000-tick ES charts and anything faster "far too fast", and VB-C is faster still, so treat this variant as experimental.
 
 **Context filter.** The context layer's STRUCTURE.state = UP (mirror: DOWN for L2 shorts). RANGE and TRANSITION are not traded, because H2s fail in ranges.
 
@@ -925,7 +925,7 @@ What must remain on clock time: all of it. **There is no volume-bar version of t
 
 **Risk & management.** The catastrophic stop sits 1.0 × ATR(M30) from entry, using M30 bars on RTH data. It defines 1R for sizing. There is no target; the exit is by time at 15:59:30 ET via a marketable limit, with a broker-side time flatten as backstop (Rithmic `stopMarketAtSsboe` / `targetMarketAtSsboe`, Tradovate `flattenTimestamp`; see [07 Automation architecture](07%20Automation%20architecture.md)). No breakeven or trailing, since the hold is too short and those rules would alter the tested mechanism.
 
-**Filters.** Skip early-close and holiday sessions, because the "last half-hour" differs. Skip FOMC statement days by default: the afternoon is event-driven, which is not the mechanism described (design; configurable). Blackout per the family rules. One trade per day per instrument.
+**Filters.** Skip early-close and holiday sessions, because the "last half-hour" differs. Skip FOMC statement days by default: the afternoon is event-driven, which is not the mechanism described (design; configurable). Blackout per the family rules. One trade per day per instrument. This proposal overrides the family's "flat 5 minutes before the RTH close" rule: its exit is 15:59:30 ET.
 
 **Automation spec.**
 
@@ -1205,7 +1205,7 @@ Bot error signatures: "equal highs" where one pivot was still unconfirmed at the
 
 **At a glance.** Style: intraday, opening window · Typical hold: 15 minutes to 2 hours, flat by 11:30 ET · Instruments: ES/MES, NQ/MNQ · Regime: RTH opens inside the overnight range (a balanced open) · Evidence: B · Automation: Low.
 
-**Concept basis.** The overnight high and low (Globex 18:00 ET to the 09:30 ET RTH open) are among the practitioner core reference levels. In code they must be defined unambiguously against a stated session template ([02 Multi timeframe price action](02%20Multi%20timeframe%20price%20action.md)). The case for fading the first failed test at the open combines two things: Osler's evidence that watched extremes interrupt trends more often than chance ([Osler 2000](https://www.newyorkfed.org/medialibrary/media/research/epr/00v06n2/0007osle.pdf)), and the volume-clock observation that ES volume concentrates sharply around the US open ([Easley et al.](https://c.mql5.com/forextsd/forum/173/the_volume_clock_-_insights_into_the_high_frequency_paradigm.pdf)). The overnight extremes are therefore where thin overnight inventory first meets RTH participation. The grade is B by analogy with PDH and PDL, with the honest weakness that overnight extremes form in thin trading and no futures study of them was found. The trigger is Sperandeo's classic: once price closes back inside, a stop just beyond the low of the bar that closed back inside, with the stop above the false-break high ([RoboForex](https://roboforex.com/blog/education/trading-like-sperandeo-1-2-3-reversal-and-2b-pattern/)).
+**Concept basis.** The overnight high and low (Globex 18:00 ET to the 09:30 ET RTH open) are among the practitioner core reference levels. In code they must be defined unambiguously against a stated session template ([02 Multi timeframe price action](02%20Multi%20timeframe%20price%20action.md)). The case for fading the first failed test at the open combines two things: Osler's evidence that watched extremes interrupt trends more often than chance ([Osler 2000](https://www.newyorkfed.org/medialibrary/media/research/epr/00v06n2/0007osle.pdf)), and the volume-clock paper's finding that the US-open hour is one of the periods with the heaviest bursts of ES volume ([Easley et al.](https://c.mql5.com/forextsd/forum/173/the_volume_clock_-_insights_into_the_high_frequency_paradigm.pdf)). The overnight extremes are therefore where thin overnight inventory first meets RTH participation. The grade is B by analogy with PDH and PDL, with the honest weakness that overnight extremes form in thin trading and no futures study of them was found. The trigger is Sperandeo's classic: once price closes back inside, a stop just beyond the low of the bar that closed back inside, with the stop above the false-break high ([RoboForex](https://roboforex.com/blog/education/trading-like-sperandeo-1-2-3-reversal-and-2b-pattern/)).
 
 **Chart stack.**
 
